@@ -147,7 +147,7 @@ test('veículo nunca tem parcela reduzida, mesmo com redução marcada', () => {
 const imovelReal = { tipo: 'imovel', prazo: 220, taxa_admin: 24.19, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 49.984, reducao_regra: 'fundo_comum', arredondamento: 'cortar' };
 const veiculoReal = { tipo: 'veiculo', prazo: 90, taxa_admin: 16.2, fundo_reserva: 0, seguro: 0, reduzida: 0, arredondamento: 'arredondar' };
 
-for (const [credito, integral, reduzida] of [[80000, 451.6, 269.84], [160000, 903.2, 539.68]]) {
+for (const [credito, integral, reduzida] of [[80000, 451.6, 269.84], [160000, 903.2, 539.68], [250000, 1411.25, 843.25]]) {
   test(`imóvel real R$${credito}: integral ${integral} e reduzida ${reduzida}`, () => {
     const r = calcular(imovelReal, credito);
     assert.equal(r.parcelaIntegral, integral);
