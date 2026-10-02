@@ -1,0 +1,25 @@
+body.admin main.wide{max-width:1200px}
+.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.tab{border:2px solid var(--line);background:#fff;border-radius:999px;padding:8px 16px;font:inherit;font-weight:700;font-size:.88rem;cursor:pointer;color:var(--navy)}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tabs .sp{flex:1}
+.tbl-wrap{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;font-size:.84rem;min-width:980px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f0f4fa;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0}
+tr.lead{cursor:pointer}tr.lead:hover{background:#f7faff}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.74rem;font-weight:700;background:#eef1f6;color:var(--muted)}
+.badge.agora{background:#fde7e3;color:#b3321f}.badge.conversar{background:#fff1d6;color:#8a5b00}.badge.depois{background:#e3eefc;color:#245aa8}
+.badge.pago{background:#e3f6ee;color:var(--green-d)}
+.det td{background:#fafcff;font-size:.82rem}
+.det dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 18px}
+.det dt{font-size:.7rem;text-transform:uppercase;color:var(--muted)}.det dd{margin:0;font-weight:600}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.chk{display:flex;gap:8px;align-items:center;font-weight:600}.chk input{width:auto}
+.plan-card{margin-bottom:12px}
+.plan-card h3{font-size:1rem;color:var(--navy);margin-bottom:10px}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn.sm.danger{background:var(--red)}
+.login{max-width:360px;margin:40px auto}
+.ok-msg{color:var(--green-d);font-weight:600;font-size:.9rem;margin-top:8px}
+.prev{font-size:.84rem;color:var(--muted);margin-top:10px;background:#f1f5fb;border-radius:10px;padding:10px}
