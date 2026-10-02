@@ -125,3 +125,20 @@ test('parcela reduzida existe somente para imóvel', () => {
     assert.equal(r.reducaoMeses, 0);
   }
 });
+
+// ---- Veículo: prazo máximo 90 meses, taxa de administração 16,2% (sem parcela reduzida) ----
+const veiculo90 = { tipo: 'veiculo', prazo: 90, taxa_admin: 16.2, fundo_reserva: 0, seguro: 0, reduzida: 0, reducao_pct: 0, reducao_regra: 'fundo_comum' };
+
+test('veículo R$90.000, 90 meses, 16,2%: (90.000 + 14.580) / 90 = 1.162,00', () => {
+  const r = calcular(veiculo90, 90000);
+  assert.equal(r.taxaAdmin, 14580);
+  assert.equal(r.fundoComumMensal, 1000);
+  assert.equal(r.taxaAdminMensal, 162);
+  assert.equal(r.parcelaIntegral, 1162);
+  assert.equal(r.parcelaReduzida, null);
+  assert.equal(r.prazo, 90);
+});
+
+test('veículo nunca tem parcela reduzida, mesmo com redução marcada', () => {
+  assert.equal(calcular({ ...veiculo90, reduzida: 1, reducao_pct: 50 }, 90000).parcelaReduzida, null);
+});
