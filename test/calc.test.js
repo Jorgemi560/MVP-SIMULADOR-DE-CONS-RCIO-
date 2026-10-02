@@ -162,13 +162,18 @@ for (const [credito, antes, apos] of [[90000, 1161.99, 1162], [130000, 1678.43, 
   });
 }
 
-test('imóvel acima de R$500 mil: reduzida de 55% (taxa integral), diferente do plano de 50%', () => {
-  const acima = { ...imovelReal, reducao_pct: 54.984 };
-  for (const credito of [600000, 1000000]) {
-    const r = calcular(acima, credito);
-    const esperado = Math.floor(((credito * (1 - 0.54984) + credito * 0.2419) / 220) * 100 + 1e-6) / 100;
-    assert.equal(r.parcelaReduzida, esperado);
-    assert.equal(r.parcelaIntegral, calcular(imovelReal, credito).parcelaIntegral); // integral não muda
-    assert.ok(r.parcelaReduzida < calcular(imovelReal, credito).parcelaReduzida);   // 55% reduz mais que 50%
-  }
+// Plano "55% diluído" (a partir de R$500 mil): a reduzida PAGA 55% do fundo comum (redução de 45%).
+const imovel55 = { ...imovelReal, prazo: 219, taxa_admin: 24.1949, reducao_pct: 45.0045 };
+
+test('imóvel R$500.000 (55% diluído, 219 meses): integral 2.835,50 e reduzida 1.808,00', () => {
+  const r = calcular(imovel55, 500000);
+  assert.equal(r.parcelaIntegral, 2835.5);
+  assert.equal(r.parcelaReduzida, 1808);
+});
+
+test('plano 55% diluído mantém a taxa integral e escala com o crédito', () => {
+  const a = calcular(imovel55, 500000), b = calcular(imovel55, 1000000);
+  assert.ok(Math.abs(b.parcelaIntegral - a.parcelaIntegral * 2) <= 0.02);
+  assert.ok(Math.abs(b.parcelaReduzida - a.parcelaReduzida * 2) <= 0.02);
+  assert.ok(a.parcelaReduzida > calcular({ ...imovel55, reducao_pct: 50 }, 500000).parcelaReduzida); // paga mais que no 50%
 });

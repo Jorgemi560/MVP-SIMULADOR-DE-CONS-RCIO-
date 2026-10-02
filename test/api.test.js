@@ -84,16 +84,15 @@ test('admin: senha errada e CRUD de plano', async () => {
   assert.equal((await call(`/api/admin/planos/${c.data.id}`, { method: 'DELETE', headers: A })).status, 200);
 });
 
-test('faixas de imóvel: até R$500 mil reduz 50%, acima reduz 55%', async () => {
-  const { calcular } = require('../lib/calc');
-  const base = { tipo: 'imovel', prazo: 220, taxa_admin: 24.19, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_regra: 'fundo_comum', arredondamento: 'cortar' };
+test('faixas de imóvel: abaixo de R$500 mil paga 50%; a partir de R$500 mil, plano 55% diluído', async () => {
   const co = await call('/api/checkout', { method: 'POST', body: { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com' } });
   const h = { 'X-Lead-Token': co.data.token };
   await call(`/api/lead/${co.data.leadId}/mock-pay`, { method: 'POST', headers: h });
   const dados = { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 5000, tipo: 'imovel', parcela: 'reduzida' };
-  for (const [credito, pct] of [[500000, 49.984], [600000, 54.984]]) {
-    const r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, credito } });
-    assert.equal(r.status, 200);
-    assert.equal(r.data.parcelaReduzida, calcular({ ...base, reducao_pct: pct }, credito).parcelaReduzida, `crédito ${credito}`);
-  }
+  const sim = async (credito) => (await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, credito } })).data;
+  assert.equal((await sim(250000)).parcelaReduzida, 843.25);       // 220 meses, 50%
+  const r500 = await sim(500000);                                  // simulação real do consultor
+  assert.equal(r500.parcelaIntegral, 2835.5);
+  assert.equal(r500.parcelaReduzida, 1808);
+  assert.equal(r500.prazo, 219);
 });
