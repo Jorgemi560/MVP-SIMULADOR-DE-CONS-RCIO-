@@ -316,12 +316,16 @@ function enviarDados(form) {
 // ---- telas com lógica própria ----
 async function montarPagamento() {
   const box = document.getElementById('pay-box');
+  const qrSvg = (txt) => { try { const q = qrcode(0, 'M'); q.addData(txt); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch { return ''; } };
   const pintar = () => {
     const pix = S.pix;
     box.innerHTML = `
       <span class="pill">Valor: R$ 5,00</span>
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
+      ${pix?.copiaECola && !pix.qrBase64 ? `<div class="qr" role="img" aria-label="QR Code Pix">${qrSvg(pix.copiaECola)}</div>` : ''}
+      ${pix?.recebedor ? `<p class="hint" style="margin:0 0 4px">Recebedor: <b>${esc(pix.recebedor)}</b><br>CNPJ ${esc(pix.cnpj)}</p>` : ''}
       ${pix?.copiaECola ? `<p style="font-size:.9rem;margin-top:6px">Pix copia e cola:</p><div class="copy">${esc(pix.copiaECola)}</div><button class="btn ghost" data-act="copiar">COPIAR CÓDIGO PIX</button>` : ''}
+      ${S.pix?.recebedor ? `<button class="btn" data-act="paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague R$ 5,00 e volte aqui.</p>` : ''}
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
@@ -331,7 +335,8 @@ async function montarPagamento() {
     if (S.tela !== 'pagamento') return;
     try {
       const r = await api(`/api/lead/${S.lead.id}/estado`);
-      if (r.pagamento === 'pago') return go('tipo');
+      if (r.pix) { S.pix = r.pix; if (!document.querySelector('.qr') && !document.getElementById('pay-box').querySelector('.copy')) pintar(); }
+      if (r.liberado) return go('tipo');
       if (r.pagamento !== 'pendente') { const s = document.getElementById('pay-status'); if (s) s.textContent = 'Pagamento não concluído. Reinicie a simulação.'; return; }
     } catch (e) { if (e.status === 404) { reset(); return go('home'); } }
     setTimeout(verificar, 3000);
@@ -367,6 +372,7 @@ document.addEventListener('click', (e) => {
   S.wa = S.resultado.whatsappUrl; save();
 });
 A.retry = () => render();
+A.paguei = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); const r = await api(`/api/lead/${S.lead.id}/estado`); if (r.liberado) go('tipo'); else setMsg($app, 'Pagamento registrado. Assim que for confirmado, sua simulação é liberada.'); } catch (e) { setMsg($app, e.message); } }); };
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
 A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/mock-pay`, { method: 'POST' }); go('tipo'); } catch (e) { setMsg($app, e.message); } }); };
 

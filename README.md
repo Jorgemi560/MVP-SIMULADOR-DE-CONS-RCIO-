@@ -28,8 +28,9 @@ Redução (só imóvel, configurável por plano): `fundo_comum` → `(crédito �
 Havendo vários planos para o tipo/valor, usa-se o de menor parcela. **Os planos iniciais são exemplos ilustrativos** — ajuste em /admin com as condições reais.
 
 ## Pagamento
-- `PAYMENT_PROVIDER=mock`: só desenvolvimento (botão "simular pagamento"); é bloqueado com `NODE_ENV=production`.
-- `PAYMENT_PROVIDER=mercadopago` + `MP_ACCESS_TOKEN` + `PUBLIC_URL`: Pix com QR/copia-e-cola, confirmação por polling e webhook (`/api/webhooks/mercadopago`, o status é sempre reconsultado na API). **Essa integração ainda não foi testada contra a API real** — valide com credenciais de teste antes de rodar anúncios.
+- `PAYMENT_PROVIDER=pix` (padrão): Pix estático com a chave CNPJ da LATRYKA (`PIX_*` no `.env`). A tela mostra QR Code e "copia e cola" de R$ 5,00. Como não há API de banco, **não há confirmação automática**: o cliente toca em "Já fiz o pagamento" e a simulação é liberada (`PIX_LIBERAR=informado`); em `/admin` o lead aparece com o pagamento "informado — conferir" e você confirma ou marca "Não recebi" após olhar o extrato. Com `PIX_LIBERAR=confirmado` a simulação só libera depois da sua confirmação.
+- `PAYMENT_PROVIDER=mercadopago` + `MP_ACCESS_TOKEN` + `PUBLIC_URL`: Pix dinâmico com confirmação automática (polling + webhook). Ainda não testado contra a API real.
+- `PAYMENT_PROVIDER=mock`: só desenvolvimento; bloqueado com `NODE_ENV=production`.
 
 ## Notas
 - Dados pessoais (CPF, etc.) ficam no SQLite (`data/`); proteja o disco/backup e publique política de privacidade (LGPD).

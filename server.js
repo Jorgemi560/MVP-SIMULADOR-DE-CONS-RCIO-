@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { db, getConfig, setConfig } = require('./lib/db');
-const { provider } = require('./lib/payment');
+const { provider, brCodeDoPagamento } = require('./lib/payment');
 const { calcular, escolherPlano } = require('./lib/calc');
 const V = require('./lib/validate');
 
@@ -18,6 +18,11 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (IS_PROD ? '' : 'admin123')
 if (!ADMIN_PASSWORD) throw new Error('ADMIN_PASSWORD é obrigatória em produção');
 if (!process.env.ADMIN_PASSWORD) console.warn('⚠ ADMIN_PASSWORD não definida: usando "admin123" (somente desenvolvimento).');
 const ADMIN_SECRET = crypto.createHash('sha256').update(`adm:${ADMIN_PASSWORD}`).digest();
+
+// Pix estático: 'informado' libera a simulação quando o cliente diz que pagou (o admin confere depois);
+// 'confirmado' só libera depois que o admin confirmar o pagamento em /admin.
+const PIX_LIBERAR = process.env.PIX_LIBERAR === 'confirmado' ? 'confirmado' : 'informado';
+const pagamentoLiberado = (status) => status === 'pago' || (status === 'informado' && PIX_LIBERAR === 'informado');
 
 const TIPOS = ['imovel', 'veiculo', 'outros'];
 const TIPO_LABEL = { imovel: 'imóvel', veiculo: 'veículo', outros: 'outros bens' };
@@ -164,7 +169,11 @@ route('GET', '/api/lead/:id/estado', async (req, { params }) => {
   const lead = leadAutenticado(req, params.id);
   const pg = ultimoPagamento(lead.id);
   const status = pg ? await sincronizarPagamento(pg) : 'pendente';
-  return { pagamento: status, nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao };
+  return {
+    pagamento: status, liberado: pagamentoLiberado(status),
+    pix: provider.nome === 'pix' && pg && status !== 'pago' ? brCodeDoPagamento(pg.id, pg.valor_centavos) : null,
+    nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao,
+  };
 });
 
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
@@ -173,6 +182,18 @@ route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
   const pg = ultimoPagamento(lead.id);
   marcarPago(pg.id);
   return { pagamento: 'pago' };
+});
+
+route('POST', '/api/lead/:id/informar-pagamento', async (req, { params }) => {
+  if (provider.nome !== 'pix') throw new HttpError(404, 'Não encontrado');
+  limit(req, 'informar', 10, 600000);
+  const lead = leadAutenticado(req, params.id);
+  const pg = ultimoPagamento(lead.id);
+  if (pg.status === 'pendente') {
+    db.prepare("UPDATE pagamentos SET status='informado' WHERE id=?").run(pg.id);
+    db.prepare("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'").run(lead.id);
+  }
+  return { pagamento: db.prepare('SELECT status FROM pagamentos WHERE id=?').get(pg.id).status };
 });
 
 route('POST', '/api/webhooks/mercadopago', async (req, { body, url }) => {
@@ -189,7 +210,7 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
   limit(req, 'simular', 30, 600000);
   const lead = leadAutenticado(req, params.id);
   const pg = ultimoPagamento(lead.id);
-  if (!pg || (await sincronizarPagamento(pg)) !== 'pago') throw new HttpError(402, 'Pagamento não confirmado.');
+  if (!pg || !pagamentoLiberado(await sincronizarPagamento(pg))) throw new HttpError(402, 'Pagamento não confirmado.');
 
   const tipo = body.tipo, credito = Number(body.credito);
   if (!TIPOS.includes(tipo)) throw bad('Escolha o que pretende adquirir.');
@@ -270,9 +291,19 @@ route('GET', '/api/admin/leads', async (req, { url }) => {
            l.status, l.criado_em, l.simulado_em, l.cpf, l.nascimento, l.nome_mae, l.cidade, l.estado,
            p.valor_centavos, p.status AS pagamento_status, p.pago_em
     FROM leads l LEFT JOIN pagamentos p ON p.id = (SELECT MAX(id) FROM pagamentos WHERE lead_id = l.id)
-    WHERE ${where ? where : "(l.simulado_em IS NOT NULL OR p.status = 'pago')"}
+    WHERE ${where ? where : "(l.simulado_em IS NOT NULL OR p.status IN ('pago','informado'))"}
     ORDER BY l.id DESC LIMIT 1000`).all();
   return { leads: rows };
+});
+
+route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) => {
+  checkAdmin(req);
+  const pg = ultimoPagamento(Number(params.id));
+  if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
+  if (body.acao === 'confirmar') marcarPago(pg.id);
+  else if (body.acao === 'recusar') db.prepare("UPDATE pagamentos SET status='recusado' WHERE id=?").run(pg.id);
+  else throw bad('Ação inválida');
+  return { ok: true };
 });
 
 route('PATCH', '/api/admin/leads/:id', async (req, { body, params }) => {

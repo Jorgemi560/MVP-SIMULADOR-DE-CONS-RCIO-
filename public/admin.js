@@ -49,20 +49,21 @@ async function viewLeads() {
   const { leads } = await api(`/api/admin/leads?filtro=${filtro}`);
   const tb = document.getElementById('tb');
   if (!leads.length) { tb.innerHTML = '<p class="loading">Nenhum lead neste filtro.</p>'; return; }
-  tb.innerHTML = `<table><thead><tr><th>Nome</th><th>Telefone / WhatsApp</th><th>E-mail</th><th>Tipo</th><th>Crédito desejado</th><th>Capacidade mensal</th><th>Parcela escolhida</th><th>Resultado</th><th>Interesse</th><th>Data</th><th>Status</th></tr></thead><tbody>
+  tb.innerHTML = `<table><thead><tr><th>Nome</th><th>Telefone / WhatsApp</th><th>E-mail</th><th>Tipo</th><th>Crédito desejado</th><th>Capacidade mensal</th><th>Parcela escolhida</th><th>Resultado</th><th>Interesse</th><th>Data</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
   ${leads.map((l) => `<tr class="lead" data-id="${l.id}"><td><b>${esc(l.nome)}</b></td>
     <td><a href="https://wa.me/55${esc(l.telefone)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(tel(l.telefone))}</a></td>
     <td>${esc(l.email)}</td><td>${esc(l.tipo || '—')}</td><td>${l.credito ? brl(l.credito) : '—'}</td><td>${esc(l.capacidade_label || '—')}</td>
     <td>${esc(l.parcela_escolhida || '—')}</td><td>${esc(l.resultado || '—')}</td>
     <td>${l.interesse ? `<span class="badge ${l.interesse}">${INTERESSE[l.interesse]}</span>` : '—'}</td><td>${dt(l.simulado_em || l.criado_em)}</td>
-    <td onclick="event.stopPropagation()"><select data-st="${l.id}">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>
-    <tr class="det" id="d${l.id}" hidden><td colspan="11"><dl>
+    <td>${l.pagamento_status === 'informado' ? '<span class="badge conversar">conferir</span>' : `<span class="badge ${l.pagamento_status === 'pago' ? 'pago' : ''}">${esc(l.pagamento_status || '—')}</span>`}</td><td onclick="event.stopPropagation()"><select data-st="${l.id}">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>
+    <tr class="det" id="d${l.id}" hidden><td colspan="12"><dl>
       <div><dt>Telefone / WhatsApp</dt><dd>${esc(tel(l.telefone))}</dd></div><div><dt>CPF</dt><dd>${esc(l.cpf || '—')}</dd></div><div><dt>Nascimento</dt><dd>${esc(l.nascimento || '—')}</dd></div>
       <div><dt>Nome da mãe</dt><dd>${esc(l.nome_mae || '—')}</dd></div><div><dt>Cidade/UF</dt><dd>${esc(l.cidade || '—')} / ${esc(l.estado || '—')}</dd></div>
-      <div><dt>Pagamento</dt><dd><span class="badge ${l.pagamento_status === 'pago' ? 'pago' : ''}">${esc(l.pagamento_status || '—')}</span> ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}</dd></div>
+      <div><dt>Pagamento</dt><dd><span class="badge ${l.pagamento_status === 'pago' ? 'pago' : ''}">${esc(l.pagamento_status || '—')}</span> ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}${l.pagamento_status === 'informado' ? ` <button class="btn sm" data-pg="confirmar" data-lead="${l.id}">Confirmar recebimento</button> <button class="btn sm ghost" data-pg="recusar" data-lead="${l.id}">Não recebi</button>` : ''}</dd></div>
       <div><dt>Pago em</dt><dd>${dt(l.pago_em)}</dd></div><div><dt>Cadastro</dt><dd>${dt(l.criado_em)}</dd></div></dl></td></tr>`).join('')}
   </tbody></table>`;
   tb.querySelectorAll('tr.lead').forEach((tr) => tr.onclick = () => { const d = document.getElementById(`d${tr.dataset.id}`); d.hidden = !d.hidden; });
+  tb.querySelectorAll('[data-pg]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); try { await api(`/api/admin/leads/${b.dataset.lead}/pagamento`, { method: 'POST', body: { acao: b.dataset.pg } }); viewLeads(); } catch (err) { alert(err.message); } });
   tb.querySelectorAll('[data-st]').forEach((s) => s.onchange = () => api(`/api/admin/leads/${s.dataset.st}`, { method: 'PATCH', body: { status: s.value } }).catch((e) => alert(e.message)));
 }
 
