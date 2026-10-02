@@ -53,7 +53,7 @@ test('validações', () => {
 });
 
 // ---- Parcela reduzida de imóvel: a redução incide SÓ no fundo comum ----
-const imovel220 = { prazo: 220, taxa_admin: 24, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 50, reducao_regra: 'fundo_comum' };
+const imovel220 = { tipo: 'imovel', prazo: 220, taxa_admin: 24, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 50, reducao_regra: 'fundo_comum' };
 const cents = (n) => Math.round(n * 100) / 100;
 
 test('referência: R$500.000, 220 meses, adm 24%, redução 50% do fundo comum', () => {
@@ -95,4 +95,30 @@ test('percentual de redução é configurável (não fixo em 50%)', () => {
 test('período da redução é informado no resultado do cálculo', () => {
   assert.equal(calcular({ ...imovel220, reducao_meses: 24 }, 500000).reducaoMeses, 24);
   assert.equal(calcular({ ...imovel220, reduzida: 0, reducao_meses: 24 }, 500000).reducaoMeses, 0);
+});
+
+// ---- Exemplo do negócio: R$100.000, 24,2% => taxa 24.200; reduzida = (50.000 + 24.200) / 220 ----
+const ex100 = { tipo: 'imovel', prazo: 220, taxa_admin: 24.2, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 50, reducao_regra: 'fundo_comum' };
+
+test('R$100.000 + 24,2% (taxa 24.200): reduzida = (50.000 + 24.200) / 220 = 337,27', () => {
+  const r = calcular(ex100, 100000);
+  assert.equal(r.taxaAdmin, 24200);
+  assert.equal(r.parcelaReduzida, 337.27);
+  assert.equal(r.parcelaIntegral, 564.55); // (100.000 + 24.200) / 220
+  assert.equal(cents((50000 + 24200) / 220), 337.27);
+});
+
+test('a taxa não é reduzida: continua 24.200 na parcela reduzida (não 12.100)', () => {
+  const r = calcular(ex100, 100000);
+  assert.notEqual(r.parcelaReduzida, cents((50000 + 12100) / 220)); // 282,27 estaria errado
+  assert.notEqual(r.parcelaReduzida, cents(r.parcelaIntegral / 2));  // 50% da parcela total estaria errado
+  assert.equal(r.taxaAdminMensal, 110);
+});
+
+test('parcela reduzida existe somente para imóvel', () => {
+  for (const tipo of ['veiculo', 'outros']) {
+    const r = calcular({ ...ex100, tipo }, 100000);
+    assert.equal(r.parcelaReduzida, null);
+    assert.equal(r.reducaoMeses, 0);
+  }
 });

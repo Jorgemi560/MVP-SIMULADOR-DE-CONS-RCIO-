@@ -42,9 +42,10 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   assert.equal(url.origin + url.pathname, 'https://wa.me/5541997446032'); // número do especialista, não o do cliente
   const msg = url.searchParams.get('text');
   assert.match(msg, /^Olá! Acabei de fazer minha simulação de consórcio e quero entender melhor as opções disponíveis\./);
-  assert.match(msg, /Nome: João da Silva/); assert.match(msg, /Tipo: Imóvel/); assert.match(msg, /Parcela: reduzida/); assert.match(msg, /Valor estimado da parcela: R\$\s?496,19/);
+  assert.match(msg, /Nome: João da Silva/); assert.match(msg, /Tipo: Imóvel/); assert.match(msg, /Parcela: reduzida/); assert.match(msg, /Valor estimado da parcela: R\$\s?337,27/);
   assert.ok(!url.pathname.includes('11999998888'));
   assert.ok(r.data.parcelaIntegral > r.data.parcelaReduzida);
+  assert.equal(r.data.parcelaIntegral, 564.55); assert.equal(r.data.parcelaReduzida, 337.27);
 
   r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, cpf: '11111111111', tipo: 'imovel', credito: 100000 } });
   assert.equal(r.status, 400);
@@ -77,6 +78,8 @@ test('admin: senha errada e CRUD de plano', async () => {
   const plano = { nome: 'Teste', tipo: 'outros', prazo: 100, taxa_admin: 10, fundo_reserva: 1, seguro: 0.03, indice: 'IPCA', reduzida: true, reducao_pct: 30, reducao_regra: 'parcela_total', regra_texto: 'x', credito_min: 1000, credito_max: 500000, ativo: true };
   const c = await call('/api/admin/planos', { method: 'POST', headers: A, body: plano });
   assert.equal(c.status, 200);
+  const salvo = (await call('/api/admin/planos', { headers: A })).data.planos.find((x) => x.id === c.data.id);
+  assert.equal(salvo.reduzida, 0); // tipo 'outros': redução é forçada a desligada
   assert.equal((await call('/api/admin/planos', { method: 'POST', headers: A, body: { ...plano, credito_min: 9e6, credito_max: 1 } })).status, 400);
   assert.equal((await call(`/api/admin/planos/${c.data.id}`, { method: 'DELETE', headers: A })).status, 200);
 });

@@ -76,7 +76,7 @@ function planoForm(p) {
     ${NUM('fundo_reserva', 'Fundo de reserva (% total)', p.fundo_reserva)}${NUM('seguro', 'Seguro (% ao mês s/ crédito)', p.seguro)}
     <div class="field"><label>Índice de atualização</label><select name="indice">${['INCC', 'IPCA', 'INPC', 'IGP-M', 'Outro'].map((i) => `<option ${p.indice === i ? 'selected' : ''}>${i}</option>`).join('')}</select></div>
     ${NUM('credito_min', 'Crédito mínimo (R$)', p.credito_min)}${NUM('credito_max', 'Crédito máximo (R$)', p.credito_max)}
-    <div class="field"><label>Parcela reduzida</label><label class="chk"><input type="checkbox" name="reduzida" ${p.reduzida ? 'checked' : ''}> Oferecer parcela reduzida</label></div>
+    <div class="field"><label>Parcela reduzida</label><label class="chk"><input type="checkbox" name="reduzida" ${p.reduzida ? 'checked' : ''}> Oferecer parcela reduzida (somente imóvel)</label></div>
     ${NUM('reducao_pct', 'Percentual da redução (%)', p.reducao_pct)}
     <div class="field"><label>Regra da redução</label><select name="reducao_regra"><option value="fundo_comum" ${p.reducao_regra === 'fundo_comum' ? 'selected' : ''}>Reduz % somente do fundo comum (taxas integrais)</option><option value="parcela_total" ${p.reducao_regra === 'parcela_total' ? 'selected' : ''}>Reduz % da parcela total</option></select></div>
     ${NUM('reducao_meses', 'Período da redução (meses; 0 = sem prazo definido)', p.reducao_meses || 0, 1)}

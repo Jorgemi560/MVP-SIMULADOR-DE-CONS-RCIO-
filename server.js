@@ -286,7 +286,7 @@ function planoDoCorpo(b) {
   const num = (v, min, max, nome) => { const n = Number(v); if (!(n >= min && n <= max)) throw bad(`${nome} inválido(a)`); return n; };
   if (!V.textoValido(b.nome, 2, 80)) throw bad('Nome do plano inválido');
   if (!TIPOS.includes(b.tipo)) throw bad('Tipo inválido');
-  const reduzida = b.reduzida ? 1 : 0;
+  const reduzida = b.reduzida && b.tipo === 'imovel' ? 1 : 0; // parcela reduzida: somente imóvel
   const regra = ['fundo_comum', 'parcela_total'].includes(b.reducao_regra) ? b.reducao_regra : 'fundo_comum';
   const p = {
     nome: b.nome.trim(), tipo: b.tipo,
