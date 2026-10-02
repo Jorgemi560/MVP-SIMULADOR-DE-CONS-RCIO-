@@ -161,3 +161,14 @@ for (const [credito, antes, apos] of [[90000, 1161.99, 1162], [130000, 1678.43, 
     assert.equal(calcular({ ...veiculoReal, arredondamento: 'cortar_menos_1' }, credito).parcelaIntegral, antes);
   });
 }
+
+test('imóvel acima de R$500 mil: reduzida de 55% (taxa integral), diferente do plano de 50%', () => {
+  const acima = { ...imovelReal, reducao_pct: 54.984 };
+  for (const credito of [600000, 1000000]) {
+    const r = calcular(acima, credito);
+    const esperado = Math.floor(((credito * (1 - 0.54984) + credito * 0.2419) / 220) * 100 + 1e-6) / 100;
+    assert.equal(r.parcelaReduzida, esperado);
+    assert.equal(r.parcelaIntegral, calcular(imovelReal, credito).parcelaIntegral); // integral não muda
+    assert.ok(r.parcelaReduzida < calcular(imovelReal, credito).parcelaReduzida);   // 55% reduz mais que 50%
+  }
+});
