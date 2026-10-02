@@ -142,3 +142,22 @@ test('veículo R$90.000, 90 meses, 16,2%: (90.000 + 14.580) / 90 = 1.162,00', ()
 test('veículo nunca tem parcela reduzida, mesmo com redução marcada', () => {
   assert.equal(calcular({ ...veiculo90, reduzida: 1, reducao_pct: 50 }, 90000).parcelaReduzida, null);
 });
+
+// ---- Calibração com simulações reais da administradora (parcela antes da contemplação) ----
+const imovelReal = { tipo: 'imovel', prazo: 220, taxa_admin: 24.19, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 49.984, reducao_regra: 'fundo_comum', arredondamento: 'cortar' };
+const veiculoReal = { tipo: 'veiculo', prazo: 90, taxa_admin: 16.2, fundo_reserva: 0, seguro: 0, reduzida: 0, arredondamento: 'arredondar' };
+
+for (const [credito, integral, reduzida] of [[80000, 451.6, 269.84], [160000, 903.2, 539.68]]) {
+  test(`imóvel real R$${credito}: integral ${integral} e reduzida ${reduzida}`, () => {
+    const r = calcular(imovelReal, credito);
+    assert.equal(r.parcelaIntegral, integral);
+    assert.equal(r.parcelaReduzida, reduzida);
+  });
+}
+
+for (const [credito, antes, apos] of [[90000, 1161.99, 1162], [130000, 1678.43, 1678.44], [150000, 1936.65, 1936.67]]) {
+  test(`veículo real R$${credito}: após contemplação ${apos}; "antes" = ${antes} com cortar_menos_1`, () => {
+    assert.equal(calcular(veiculoReal, credito).parcelaIntegral, apos);
+    assert.equal(calcular({ ...veiculoReal, arredondamento: 'cortar_menos_1' }, credito).parcelaIntegral, antes);
+  });
+}

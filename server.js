@@ -8,7 +8,7 @@ try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é 
 
 const { db, getConfig, setConfig } = require('./lib/db');
 const { provider, brCodeDoPagamento } = require('./lib/payment');
-const { calcular, escolherPlano } = require('./lib/calc');
+const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -326,7 +326,8 @@ function planoDoCorpo(b) {
     fundo_reserva: num(b.fundo_reserva ?? 0, 0, 100, 'Fundo de reserva'),
     seguro: num(b.seguro ?? 0, 0, 5, 'Seguro'),
     indice: String(b.indice || 'IPCA').slice(0, 20),
-    reduzida, reducao_pct: reduzida ? num(b.reducao_pct, 0.01, 99.99, 'Percentual da redução') : 0,
+    reduzida, reducao_pct: reduzida ? num(b.reducao_pct, 0.001, 99.999, 'Percentual da redução') : 0,
+    arredondamento: Object.hasOwn(ARREDONDAMENTOS, b.arredondamento) ? b.arredondamento : 'cortar',
     reducao_regra: regra, reducao_meses: reduzida ? Math.round(num(b.reducao_meses || 0, 0, 600, 'Período da redução')) : 0, regra_texto: String(b.regra_texto ?? '').slice(0, 300),
     credito_min: num(b.credito_min, 1, 1e9, 'Crédito mínimo'), credito_max: num(b.credito_max, 1, 1e9, 'Crédito máximo'),
     ativo: b.ativo ? 1 : 0,
@@ -334,7 +335,7 @@ function planoDoCorpo(b) {
   if (p.credito_min > p.credito_max) throw bad('Crédito mínimo maior que o máximo');
   return p;
 }
-const COLS = ['nome', 'tipo', 'prazo', 'taxa_admin', 'fundo_reserva', 'seguro', 'indice', 'reduzida', 'reducao_pct', 'reducao_regra', 'reducao_meses', 'regra_texto', 'credito_min', 'credito_max', 'ativo'];
+const COLS = ['nome', 'tipo', 'prazo', 'taxa_admin', 'fundo_reserva', 'seguro', 'indice', 'reduzida', 'reducao_pct', 'reducao_regra', 'reducao_meses', 'arredondamento', 'regra_texto', 'credito_min', 'credito_max', 'ativo'];
 
 route('GET', '/api/admin/planos', async (req) => { checkAdmin(req); return { planos: db.prepare('SELECT * FROM planos ORDER BY tipo, id').all() }; });
 route('POST', '/api/admin/planos', async (req, { body }) => {

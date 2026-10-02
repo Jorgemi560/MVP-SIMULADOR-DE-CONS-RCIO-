@@ -25,6 +25,7 @@ O servidor bloqueia a simulação enquanto o pagamento não estiver `pago`.
 Por plano: fundo comum = crédito; taxa adm. e fundo de reserva = % do crédito diluídos no prazo; seguro = % ao mês sobre o crédito.
 `parcela integral = (crédito + adm + reserva + seguro) / prazo`, centavos cortados (como no material das administradoras).
 Redução (só imóvel, configurável por plano): `fundo_comum` → `(crédito × (1 − %) + taxas integrais) / prazo` ou `parcela_total` (reduz X% da parcela).
+Cada plano escolhe o arredondamento da parcela (cortar, arredondar ou cortar −1 centavo) para espelhar a tabela da administradora; os planos iniciais foram calibrados com simulações reais.
 Havendo vários planos para o tipo/valor, usa-se o de menor parcela. **Os planos iniciais são exemplos ilustrativos** — ajuste em /admin com as condições reais.
 
 ## Pagamento
