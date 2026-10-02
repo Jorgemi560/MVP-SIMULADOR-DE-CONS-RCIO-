@@ -197,6 +197,7 @@ T.resultado = () => {
     <div class="qual center">
       <h2>Parabéns!</h2>
       <p class="sub" style="margin:6px 0 0">Com base nas informações fornecidas, você pode avançar para uma análise personalizada de consórcio.</p>
+      ${r.whatsappUrl ? `<a class="btn" id="btn-especialista" href="${esc(r.whatsappUrl)}" target="_blank" rel="noopener" style="margin-top:16px">QUERO FALAR COM UM ESPECIALISTA</a>` : ''}
     </div>
     <div class="card center" style="margin-top:18px">
       <h2 style="font-size:1.2rem">Você tem interesse em fazer seu consórcio ainda hoje?</h2>
@@ -359,6 +360,12 @@ async function processar() {
     else $app.querySelector('.msg').insertAdjacentHTML('afterend', '<button class="btn ghost" data-act="retry" style="margin-top:12px">Tentar novamente</button>');
   }
 }
+// Clique no botão do WhatsApp: registra o lead como "quente" sem interromper a abertura do link.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#btn-especialista') || !S.lead) return;
+  fetch(`/api/lead/${S.lead.id}/interesse`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-Lead-Token': S.lead.token }, body: JSON.stringify({ interesse: 'agora' }) }).catch(() => {});
+  S.wa = S.resultado.whatsappUrl; save();
+});
 A.retry = () => render();
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
 A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/mock-pay`, { method: 'POST' }); go('tipo'); } catch (e) { setMsg($app, e.message); } }); };

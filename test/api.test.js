@@ -38,6 +38,12 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, tipo: 'imovel', credito: 100000, parcela: 'reduzida' } });
   assert.equal(r.status, 200);
   assert.equal(r.data.primeiroNome, 'João');
+  const url = new URL(r.data.whatsappUrl);
+  assert.equal(url.origin + url.pathname, 'https://wa.me/5541997446032'); // número do especialista, não o do cliente
+  const msg = url.searchParams.get('text');
+  assert.match(msg, /^Olá! Acabei de fazer minha simulação de consórcio e quero entender melhor as opções disponíveis\./);
+  assert.match(msg, /Nome: João da Silva/); assert.match(msg, /Tipo: Imóvel/); assert.match(msg, /Parcela: reduzida/); assert.match(msg, /Valor estimado da parcela: R\$\s?496,19/);
+  assert.ok(!url.pathname.includes('11999998888'));
   assert.ok(r.data.parcelaIntegral > r.data.parcelaReduzida);
 
   r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, cpf: '11111111111', tipo: 'imovel', credito: 100000 } });
@@ -45,7 +51,7 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
 
   r = await call(`/api/lead/${co.data.leadId}/interesse`, { method: 'POST', headers: h, body: { interesse: 'agora' } });
   assert.equal(r.status, 200);
-  assert.equal(r.data.whatsappUrl, null); // número ainda não configurado
+  assert.equal(new URL(r.data.whatsappUrl).pathname, '/5541997446032'); // padrão do especialista
 
   // admin
   assert.equal((await call('/api/admin/leads')).status, 401);
@@ -56,7 +62,7 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   const wa = new URL(r.data.whatsappUrl);
   assert.equal(wa.pathname, '/5511988887777');
   assert.match(wa.searchParams.get('text'), /\(11\) 99999-8888/);
-  assert.match(wa.searchParams.get('text'), /carta de R\$\s?100\.000,00 para imóvel/);
+  assert.match(wa.searchParams.get('text'), /Crédito escolhido: R\$\s?100\.000,00/);
 
   const quentes = await call('/api/admin/leads?filtro=quentes', { headers: A });
   assert.equal(quentes.data.leads.length, 1);

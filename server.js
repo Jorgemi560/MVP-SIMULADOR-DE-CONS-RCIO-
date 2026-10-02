@@ -97,8 +97,11 @@ async function sincronizarPagamento(pg) {
   return db.prepare('SELECT status FROM pagamentos WHERE id=?').get(pg.id).status;
 }
 
+// Número do especialista (destino do atendimento). Pode ser alterado em /admin → Configurações.
+const ESPECIALISTA_PADRAO = '5541997446032';
+
 function whatsappUrl(lead, texto) {
-  const num = V.digits(getConfig().whatsapp);
+  const num = V.digits(getConfig().whatsapp) || ESPECIALISTA_PADRAO;
   if (!num) return null;
   return `https://wa.me/${num.startsWith('55') ? num : `55${num}`}?text=${encodeURIComponent(texto)}`;
 }
@@ -107,10 +110,16 @@ const fmtTel = (t) => { const d = V.digits(t); return d.length === 11 ? `(${d.sl
 
 function textoWhatsapp(lead) {
   const sim = lead.simulacao ? JSON.parse(lead.simulacao) : null;
-  let t = `Olá! Acabei de fazer minha simulação de consórcio. Tenho interesse em conversar sobre uma carta de ${brl(lead.credito)} para ${TIPO_LABEL[lead.tipo]}.`;
-  if (sim?.parcelaIntegral) t += ` Parcela estimada: ${brl(sim.parcelaIntegral)}` + (sim.parcelaReduzida ? ` (reduzida: ${brl(sim.parcelaReduzida)})` : '') + '.';
-  t += ` Meu nome é ${lead.nome}. Meu WhatsApp para contato: ${fmtTel(lead.telefone)}.`;
-  return t;
+  const linhas = ['Olá! Acabei de fazer minha simulação de consórcio e quero entender melhor as opções disponíveis.', '',
+    `Nome: ${lead.nome}`,
+    `Tipo: ${{ imovel: 'Imóvel', veiculo: 'Veículo', outros: 'Outros' }[lead.tipo] || lead.tipo}`,
+    `Crédito escolhido: ${brl(lead.credito)}`];
+  if (sim) {
+    const reduzida = lead.parcela_escolhida === 'reduzida' && sim.parcelaReduzida;
+    linhas.push(`Parcela: ${reduzida ? 'reduzida' : 'integral'}`, `Valor estimado da parcela: ${brl(reduzida ? sim.parcelaReduzida : sim.parcelaIntegral)}`);
+  }
+  linhas.push(`Meu telefone: ${fmtTel(lead.telefone)}`);
+  return linhas.join('\n');
 }
 
 // ---------- rotas públicas ----------
@@ -218,7 +227,9 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
     .run(nome, email, telefone, cpf, body.nascimento, String(body.nome_mae).trim(), cidade, estado, tipo, credito,
       capLabel, capValor, escolha, esc?.plano.id ?? null, sim ? JSON.stringify(sim) : null, resultado, lead.id);
 
+  const salvo = db.prepare('SELECT * FROM leads WHERE id=?').get(lead.id);
   return {
+    whatsappUrl: whatsappUrl(salvo, textoWhatsapp(salvo)),
     primeiroNome: nome.split(/\s+/)[0], tipo, credito, escolha,
     disponivel: !!sim,
     parcelaIntegral: sim?.parcelaIntegral ?? null,
