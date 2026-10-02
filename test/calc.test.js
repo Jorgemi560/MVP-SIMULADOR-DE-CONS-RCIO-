@@ -162,13 +162,19 @@ for (const [credito, antes, apos] of [[90000, 1161.99, 1162], [130000, 1678.43, 
   });
 }
 
-// Plano "55% diluído" (a partir de R$500 mil): a reduzida PAGA 55% do fundo comum (redução de 45%).
-const imovel55 = { ...imovelReal, prazo: 219, taxa_admin: 24.1949, reducao_pct: 45.0045 };
+// Plano "55% diluído" (a partir de R$500 mil): a reduzida PAGA 55% do fundo comum (redução de 45%). Prazo sempre 220.
+const imovel55 = { ...imovelReal, reducao_pct: 45 };
 
-test('imóvel R$500.000 (55% diluído, 219 meses): integral 2.835,50 e reduzida 1.808,00', () => {
+test('imóvel R$500.000 (55% diluído, 220 meses): (275.000 + 120.950) / 220 = 1.799,77; integral 2.822,50', () => {
   const r = calcular(imovel55, 500000);
-  assert.equal(r.parcelaIntegral, 2835.5);
-  assert.equal(r.parcelaReduzida, 1808);
+  assert.equal(r.prazo, 220);
+  assert.equal(r.parcelaIntegral, 2822.5);
+  assert.equal(r.parcelaReduzida, 1799.77);
+});
+
+test('consistência com a simulação real (219 meses): 620.950 / 219 ≈ 2.835,39 e (275.000 + 120.950) / 219 ≈ 1.808,00', () => {
+  assert.ok(Math.abs((620950 / 219) - 2835.5) < 0.2);
+  assert.ok(Math.abs(((275000 + 120950) / 219) - 1808) < 0.2);
 });
 
 test('plano 55% diluído mantém a taxa integral e escala com o crédito', () => {

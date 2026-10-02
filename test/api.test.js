@@ -91,8 +91,8 @@ test('faixas de imóvel: abaixo de R$500 mil paga 50%; a partir de R$500 mil, pl
   const dados = { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 5000, tipo: 'imovel', parcela: 'reduzida' };
   const sim = async (credito) => (await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, credito } })).data;
   assert.equal((await sim(250000)).parcelaReduzida, 843.25);       // 220 meses, 50%
-  const r500 = await sim(500000);                                  // simulação real do consultor
-  assert.equal(r500.parcelaIntegral, 2835.5);
-  assert.equal(r500.parcelaReduzida, 1808);
-  assert.equal(r500.prazo, 219);
+  const r500 = await sim(500000);                                  // plano 55% diluído
+  assert.equal(r500.parcelaIntegral, 2822.5);
+  assert.equal(r500.parcelaReduzida, 1799.77);
+  assert.equal(r500.prazo, 220); // sempre 220 meses
 });
