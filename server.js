@@ -235,6 +235,7 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
     parcelaIntegral: sim?.parcelaIntegral ?? null,
     parcelaReduzida: reducaoDisponivel ? sim.parcelaReduzida : null,
     regraReducao: reducaoDisponivel ? sim.regraReducao : '',
+    reducaoMeses: reducaoDisponivel ? sim.reducaoMeses : 0,
     indice: sim?.indice ?? null,
     prazo: sim?.prazo ?? null,
   };
@@ -295,14 +296,14 @@ function planoDoCorpo(b) {
     seguro: num(b.seguro ?? 0, 0, 5, 'Seguro'),
     indice: String(b.indice || 'IPCA').slice(0, 20),
     reduzida, reducao_pct: reduzida ? num(b.reducao_pct, 0.01, 99.99, 'Percentual da redução') : 0,
-    reducao_regra: regra, regra_texto: String(b.regra_texto ?? '').slice(0, 300),
+    reducao_regra: regra, reducao_meses: reduzida ? Math.round(num(b.reducao_meses || 0, 0, 600, 'Período da redução')) : 0, regra_texto: String(b.regra_texto ?? '').slice(0, 300),
     credito_min: num(b.credito_min, 1, 1e9, 'Crédito mínimo'), credito_max: num(b.credito_max, 1, 1e9, 'Crédito máximo'),
     ativo: b.ativo ? 1 : 0,
   };
   if (p.credito_min > p.credito_max) throw bad('Crédito mínimo maior que o máximo');
   return p;
 }
-const COLS = ['nome', 'tipo', 'prazo', 'taxa_admin', 'fundo_reserva', 'seguro', 'indice', 'reduzida', 'reducao_pct', 'reducao_regra', 'regra_texto', 'credito_min', 'credito_max', 'ativo'];
+const COLS = ['nome', 'tipo', 'prazo', 'taxa_admin', 'fundo_reserva', 'seguro', 'indice', 'reduzida', 'reducao_pct', 'reducao_regra', 'reducao_meses', 'regra_texto', 'credito_min', 'credito_max', 'ativo'];
 
 route('GET', '/api/admin/planos', async (req) => { checkAdmin(req); return { planos: db.prepare('SELECT * FROM planos ORDER BY tipo, id').all() }; });
 route('POST', '/api/admin/planos', async (req, { body }) => {

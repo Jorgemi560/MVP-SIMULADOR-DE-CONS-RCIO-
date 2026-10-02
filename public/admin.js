@@ -78,7 +78,8 @@ function planoForm(p) {
     ${NUM('credito_min', 'Crédito mínimo (R$)', p.credito_min)}${NUM('credito_max', 'Crédito máximo (R$)', p.credito_max)}
     <div class="field"><label>Parcela reduzida</label><label class="chk"><input type="checkbox" name="reduzida" ${p.reduzida ? 'checked' : ''}> Oferecer parcela reduzida</label></div>
     ${NUM('reducao_pct', 'Percentual da redução (%)', p.reducao_pct)}
-    <div class="field"><label>Regra da redução</label><select name="reducao_regra"><option value="fundo_comum" ${p.reducao_regra === 'fundo_comum' ? 'selected' : ''}>Reduz % do fundo comum</option><option value="parcela_total" ${p.reducao_regra === 'parcela_total' ? 'selected' : ''}>Reduz % da parcela total</option></select></div>
+    <div class="field"><label>Regra da redução</label><select name="reducao_regra"><option value="fundo_comum" ${p.reducao_regra === 'fundo_comum' ? 'selected' : ''}>Reduz % somente do fundo comum (taxas integrais)</option><option value="parcela_total" ${p.reducao_regra === 'parcela_total' ? 'selected' : ''}>Reduz % da parcela total</option></select></div>
+    ${NUM('reducao_meses', 'Período da redução (meses; 0 = sem prazo definido)', p.reducao_meses || 0, 1)}
     <div class="field" style="grid-column:1/-1"><label>Texto da regra (exibido ao cliente)</label><input name="regra_texto" value="${esc(p.regra_texto)}"></div>
     <div class="field"><label>Situação</label><label class="chk"><input type="checkbox" name="ativo" ${p.ativo ? 'checked' : ''}> Plano ativo</label></div>
   </div>
@@ -92,7 +93,7 @@ function lerPlano(f) {
 async function viewPlanos() {
   const c = document.getElementById('conteudo');
   const { planos } = await api('/api/admin/planos');
-  const novo = { nome: '', tipo: 'imovel', prazo: 180, taxa_admin: 20, fundo_reserva: 2, seguro: 0.04, indice: 'IPCA', reduzida: 0, reducao_pct: 0, reducao_regra: 'fundo_comum', regra_texto: '', credito_min: 50000, credito_max: 500000, ativo: 1 };
+  const novo = { nome: '', tipo: 'imovel', prazo: 180, taxa_admin: 20, fundo_reserva: 2, seguro: 0.04, indice: 'IPCA', reduzida: 0, reducao_pct: 0, reducao_regra: 'fundo_comum', reducao_meses: 0, regra_texto: '', credito_min: 50000, credito_max: 500000, ativo: 1 };
   c.innerHTML = `<p class="sub" style="margin-top:0">Cadastre apenas os <b>parâmetros</b> do plano. Qualquer valor de crédito dentro da faixa é calculado automaticamente.</p>
     <button class="btn sm" id="novo" style="margin-bottom:14px">+ Novo plano</button><div id="novoBox"></div>${planos.map(planoForm).join('')}`;
   document.getElementById('novo').onclick = () => { document.getElementById('novoBox').innerHTML = planoForm(novo); };
