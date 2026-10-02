@@ -103,11 +103,13 @@ function whatsappUrl(lead, texto) {
   return `https://wa.me/${num.startsWith('55') ? num : `55${num}`}?text=${encodeURIComponent(texto)}`;
 }
 
+const fmtTel = (t) => { const d = V.digits(t); return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : d; };
+
 function textoWhatsapp(lead) {
   const sim = lead.simulacao ? JSON.parse(lead.simulacao) : null;
   let t = `Olá! Acabei de fazer minha simulação de consórcio. Tenho interesse em conversar sobre uma carta de ${brl(lead.credito)} para ${TIPO_LABEL[lead.tipo]}.`;
   if (sim?.parcelaIntegral) t += ` Parcela estimada: ${brl(sim.parcelaIntegral)}` + (sim.parcelaReduzida ? ` (reduzida: ${brl(sim.parcelaReduzida)})` : '') + '.';
-  t += ` Meu nome é ${lead.nome}.`;
+  t += ` Meu nome é ${lead.nome}. Meu WhatsApp para contato: ${fmtTel(lead.telefone)}.`;
   return t;
 }
 
@@ -133,7 +135,7 @@ route('POST', '/api/checkout', async (req, { body }) => {
   const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
   if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
   if (!V.emailValido(email)) throw bad('E-mail inválido.');
-  if (!V.telefoneValido(telefone)) throw bad('WhatsApp inválido. Informe DDD + número.');
+  if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
 
   const token = crypto.randomBytes(24).toString('hex');
   const leadId = Number(db.prepare('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?)').run(token, nome, email, telefone).lastInsertRowid);
@@ -187,7 +189,7 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
   const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
   const cpf = V.digits(body.cpf), cidade = String(body.cidade ?? '').trim(), estado = String(body.estado ?? '').toUpperCase();
   if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
-  if (!V.telefoneValido(telefone)) throw bad('WhatsApp inválido.');
+  if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
   if (!V.emailValido(email)) throw bad('E-mail inválido.');
   if (!V.cpfValido(cpf)) throw bad('CPF inválido.');
   if (!V.dataNascimentoValida(body.nascimento)) throw bad('Data de nascimento inválida (é preciso ter 18 anos ou mais).');

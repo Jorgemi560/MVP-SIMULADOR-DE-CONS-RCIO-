@@ -81,7 +81,7 @@ T.checkout = () => `
     <p class="sub" style="margin-top:4px">Para liberar sua simulação, finalize o pagamento de <b>R$5</b> via Pix.</p>
     <form class="card" id="f-checkout" novalidate>
       <div class="field"><label for="nome">Nome completo</label><input id="nome" name="nome" autocomplete="name" value="${esc(S.contato.nome)}" required></div>
-      <div class="field"><label for="tel">WhatsApp</label><input id="tel" name="telefone" data-mask="tel" inputmode="tel" autocomplete="tel-national" placeholder="(11) 99999-9999" value="${esc(S.contato.telefone)}" required></div>
+      <div class="field"><label for="tel">Telefone / WhatsApp</label><input id="tel" name="telefone" type="tel" data-mask="tel" inputmode="tel" autocomplete="tel-national" placeholder="(00) 00000-0000" maxlength="15" value="${esc(mask.tel(S.contato.telefone))}" required></div>
       <div class="field"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" value="${esc(S.contato.email)}" required></div>
       <button class="btn" type="submit">IR PARA O PAGAMENTO</button>
       <p class="msg" role="alert"></p>
@@ -128,15 +128,15 @@ T.dados = () => {
     <h2>Agora vamos preparar sua simulação personalizada.</h2>
     <form class="card" id="f-dados" novalidate style="margin-top:14px">
       <div class="field"><label for="nome">Nome completo</label><input id="nome" name="nome" autocomplete="name" value="${esc(d.nome)}"></div>
-      <div class="field"><label for="tel">WhatsApp</label><input id="tel" name="telefone" data-mask="tel" inputmode="tel" autocomplete="tel-national" value="${esc(mask.tel(d.telefone))}"></div>
+      <div class="field"><label for="tel">Telefone / WhatsApp</label><input id="tel" name="telefone" type="tel" data-mask="tel" inputmode="tel" autocomplete="tel-national" placeholder="(00) 00000-0000" maxlength="15" value="${esc(mask.tel(d.telefone))}"></div>
       <div class="field"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" value="${esc(d.email)}"></div>
-      <div class="field"><label for="cpf">CPF</label><input id="cpf" name="cpf" data-mask="cpf" inputmode="numeric" placeholder="000.000.000-00" value="${esc(mask.cpf(d.cpf))}"></div>
-      <div class="field"><label for="nasc">Data de nascimento</label><input id="nasc" name="nascimento" type="date" autocomplete="bday" value="${esc(d.nascimento)}"></div>
-      <div class="field"><label for="mae">Nome da mãe</label><input id="mae" name="nome_mae" value="${esc(d.nome_mae)}"></div>
       <div class="row">
         <div class="field" style="flex:2"><label for="cidade">Cidade</label><input id="cidade" name="cidade" autocomplete="address-level2" value="${esc(d.cidade)}"></div>
         <div class="field"><label for="uf">Estado</label><select id="uf" name="estado" autocomplete="address-level1">${optsUF(d.estado)}</select></div>
       </div>
+      <div class="field"><label for="cpf">CPF</label><input id="cpf" name="cpf" data-mask="cpf" inputmode="numeric" placeholder="000.000.000-00" value="${esc(mask.cpf(d.cpf))}"></div>
+      <div class="field"><label for="nasc">Data de nascimento</label><input id="nasc" name="nascimento" type="date" autocomplete="bday" value="${esc(d.nascimento)}"></div>
+      <div class="field"><label for="mae">Nome da mãe</label><input id="mae" name="nome_mae" value="${esc(d.nome_mae)}"></div>
       <p class="note">Seus dados serão utilizados para preparar sua simulação e, caso você solicite atendimento, para que um especialista possa entrar em contato.</p>
       <button class="btn" type="submit">CONTINUAR</button>
       <p class="msg" role="alert"></p>
@@ -299,7 +299,7 @@ function enviarDados(form) {
   const d = lerForm(form); d.telefone = digits(d.telefone); d.cpf = digits(d.cpf);
   const erros = [];
   if (d.nome.trim().length < 3) erros.push('nome');
-  if (!/^\d{10,11}$/.test(d.telefone)) erros.push('telefone');
+  if (!/^[1-9]{2}9?\d{8}$/.test(d.telefone)) erros.push('telefone');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email.trim())) erros.push('email');
   if (!VALIDACOES.cpf(d.cpf)) erros.push('cpf');
   if (!d.nascimento) erros.push('nascimento');
@@ -391,7 +391,7 @@ $app.addEventListener('submit', (e) => {
   if (e.target.id === 'f-checkout') {
     const d = lerForm(e.target), erros = [];
     if (d.nome.trim().length < 3) erros.push('nome');
-    if (!/^\d{10,11}$/.test(digits(d.telefone))) erros.push('telefone');
+    if (!/^[1-9]{2}9?\d{8}$/.test(digits(d.telefone))) erros.push('telefone');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email.trim())) erros.push('email');
     if (erros.length) { marcarErro(e.target, erros); return setMsg(e.target, 'Confira os campos destacados.'); }
     enviarCheckout(e.target);

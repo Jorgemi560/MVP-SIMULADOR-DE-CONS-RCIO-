@@ -22,6 +22,8 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   assert.equal(co.status, 200);
   const h = { 'X-Lead-Token': co.data.token };
 
+  assert.equal((await call('/api/checkout', { method: 'POST', body: { nome: dados.nome, telefone: '123', email: dados.email } })).status, 400);
+
   // sem pagamento, simulação bloqueada
   let r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, tipo: 'imovel', credito: 100000 } });
   assert.equal(r.status, 402);
@@ -53,6 +55,7 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   r = await call(`/api/lead/${co.data.leadId}/interesse`, { method: 'POST', headers: h, body: { interesse: 'agora' } });
   const wa = new URL(r.data.whatsappUrl);
   assert.equal(wa.pathname, '/5511988887777');
+  assert.match(wa.searchParams.get('text'), /\(11\) 99999-8888/);
   assert.match(wa.searchParams.get('text'), /carta de R\$\s?100\.000,00 para imóvel/);
 
   const quentes = await call('/api/admin/leads?filtro=quentes', { headers: A });
