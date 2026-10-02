@@ -11,17 +11,17 @@ test('parcela integral separa fundo comum, taxa, fundo de reserva e seguro', () 
   assert.equal(r.fundoComum, 100000);
   assert.equal(r.taxaAdmin, 24000);
   assert.equal(r.fundoReserva, 2000);
-  assert.equal(r.parcelaIntegral, 610.34); // (100000+24000+2000)/219 + 35
+  assert.equal(r.parcelaIntegral, 610.34); // (100000+24000+2000+35*219)/219 = 610,3424…
 });
 
 test('redução sobre o fundo comum mantém taxas e seguro', () => {
   const r = calcular(plano, 100000);
-  assert.equal(r.parcelaReduzida, 496.19); // 456.62*0.75 + 109.59 + 9.13 + 35
+  assert.equal(r.parcelaReduzida, 496.18); // (100000*0.75 + 24000 + 2000 + 35*219) / 219 = 496,187…
 });
 
 test('redução sobre a parcela total', () => {
   const r = calcular({ ...plano, reducao_regra: 'parcela_total' }, 100000);
-  assert.equal(r.parcelaReduzida, 457.76);
+  assert.equal(r.parcelaReduzida, 457.75); // 610,3424… × 0,75 = 457,7568…
 });
 
 test('sem redução configurada não há parcela reduzida', () => {
@@ -52,44 +52,40 @@ test('validações', () => {
   assert.ok(!V.dataNascimentoValida('1990-02-31'));
 });
 
-// ---- Parcela reduzida de imóvel: a redução incide SÓ no fundo comum ----
+// ---- Parcela reduzida de imóvel: (crédito × (1 − %) + administração integral) ÷ prazo, centavos cortados ----
+const cents = (n) => Math.floor(n * 100 + 1e-6) / 100;
 const imovel220 = { tipo: 'imovel', prazo: 220, taxa_admin: 24, fundo_reserva: 0, seguro: 0, reduzida: 1, reducao_pct: 50, reducao_regra: 'fundo_comum' };
-const cents = (n) => Math.round(n * 100) / 100;
 
-test('referência: R$500.000, 220 meses, adm 24%, redução 50% do fundo comum', () => {
+test('referência (material da administradora): R$500.000, 220 meses, adm 24%, redução 50%', () => {
   const r = calcular(imovel220, 500000);
-  assert.equal(r.fundoComumMensal, 2272.73);   // 500.000 / 220
   assert.equal(r.taxaAdmin, 120000);           // 500.000 × 24%
-  assert.equal(r.taxaAdminMensal, 545.45);     // 120.000 / 220
-  assert.equal(r.parcelaIntegral, 2818.18);
-  assert.equal(r.parcelaReduzida, 1681.81);    // 1.136,36 + 545,45
+  assert.equal(r.parcelaIntegral, 2818.18);    // 620.000 / 220
+  assert.equal(r.parcelaReduzida, 1681.81);    // (250.000 + 120.000) / 220 = 1.681,818… → centavos cortados
   assert.notEqual(r.parcelaReduzida, cents(r.parcelaIntegral * 0.5)); // NÃO é 50% da parcela total (1.409,09)
 });
 
 for (const credito of [100000, 200000, 300000, 500000, 1000000]) {
-  test(`R$${credito}: administração segue sobre 100% do crédito com fundo comum reduzido`, () => {
+  test(`R$${credito}: administração segue sobre 100% do crédito com o crédito reduzido`, () => {
+    const adm = credito * 0.24;
     const r = calcular(imovel220, credito);
-    const fundoComum = cents(credito / 220);
-    const adm = cents((credito * 0.24) / 220);
-    assert.equal(r.parcelaIntegral, cents(fundoComum + adm));
-    assert.equal(r.parcelaReduzida, cents(cents((credito / 220) * 0.5) + adm));
-    // a diferença entre as parcelas é exatamente metade do fundo comum: a taxa não mudou
-    assert.ok(Math.abs(r.parcelaIntegral - r.parcelaReduzida - fundoComum / 2) <= 0.01);
-    assert.equal(r.taxaAdminMensal, adm);
-    assert.equal(r.taxaAdmin, credito * 0.24);
+    assert.equal(r.taxaAdmin, adm);
+    assert.equal(r.parcelaIntegral, cents((credito + adm) / 220));
+    assert.equal(r.parcelaReduzida, cents((credito / 2 + adm) / 220));
+    // reduzir só o crédito: a diferença entre as parcelas é metade do crédito ÷ prazo
+    assert.ok(Math.abs(r.parcelaIntegral - r.parcelaReduzida - credito / 2 / 220) <= 0.011);
   });
 }
 
 test('fundo de reserva e seguro também permanecem integrais na parcela reduzida', () => {
   const r = calcular({ ...imovel220, fundo_reserva: 2, seguro: 0.03 }, 500000);
-  const fc = 2272.73, adm = 545.45, fr = cents(10000 / 220), seg = 150;
-  assert.equal(r.parcelaIntegral, cents(fc + adm + fr + seg));
-  assert.equal(r.parcelaReduzida, cents(cents((500000 / 220) * 0.5) + adm + fr + seg));
+  const extras = 10000 + 150 * 220; // fundo de reserva total + seguro total
+  assert.equal(r.parcelaIntegral, cents((500000 + 120000 + extras) / 220));
+  assert.equal(r.parcelaReduzida, cents((250000 + 120000 + extras) / 220));
 });
 
 test('percentual de redução é configurável (não fixo em 50%)', () => {
-  assert.equal(calcular({ ...imovel220, reducao_pct: 25 }, 500000).parcelaReduzida, cents(cents((500000 / 220) * 0.75) + 545.45));
-  assert.equal(calcular({ ...imovel220, reducao_pct: 70 }, 500000).parcelaReduzida, cents(cents((500000 / 220) * 0.3) + 545.45));
+  assert.equal(calcular({ ...imovel220, reducao_pct: 25 }, 500000).parcelaReduzida, cents((375000 + 120000) / 220));
+  assert.equal(calcular({ ...imovel220, reducao_pct: 70 }, 500000).parcelaReduzida, cents((150000 + 120000) / 220));
 });
 
 test('período da redução é informado no resultado do cálculo', () => {
@@ -104,15 +100,22 @@ test('R$100.000 + 24,2% (taxa 24.200): reduzida = (50.000 + 24.200) / 220 = 337,
   const r = calcular(ex100, 100000);
   assert.equal(r.taxaAdmin, 24200);
   assert.equal(r.parcelaReduzida, 337.27);
-  assert.equal(r.parcelaIntegral, 564.55); // (100.000 + 24.200) / 220
-  assert.equal(cents((50000 + 24200) / 220), 337.27);
+  assert.equal(r.parcelaIntegral, 564.54); // 124.200 / 220 = 564,5454… (centavos cortados)
+});
+
+test('centavos são cortados, não arredondados', () => {
+  assert.equal(calcular(ex100, 100000).parcelaIntegral, 564.54); // arredondando seria 564,55
+  assert.equal(calcular(imovel220, 500000).parcelaReduzida, 1681.81); // arredondando seria 1.681,82
 });
 
 test('a taxa não é reduzida: continua 24.200 na parcela reduzida (não 12.100)', () => {
   const r = calcular(ex100, 100000);
   assert.notEqual(r.parcelaReduzida, cents((50000 + 12100) / 220)); // 282,27 estaria errado
   assert.notEqual(r.parcelaReduzida, cents(r.parcelaIntegral / 2));  // 50% da parcela total estaria errado
-  assert.equal(r.taxaAdminMensal, 110);
+});
+
+test('divisão exata não perde centavo por erro de ponto flutuante', () => {
+  assert.equal(calcular({ ...ex100, reduzida: 0, taxa_admin: 10 }, 220000).parcelaIntegral, 1100); // 242.000 / 220
 });
 
 test('parcela reduzida existe somente para imóvel', () => {

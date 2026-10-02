@@ -45,7 +45,7 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   assert.match(msg, /Nome: João da Silva/); assert.match(msg, /Tipo: Imóvel/); assert.match(msg, /Parcela: reduzida/); assert.match(msg, /Valor estimado da parcela: R\$\s?337,27/);
   assert.ok(!url.pathname.includes('11999998888'));
   assert.ok(r.data.parcelaIntegral > r.data.parcelaReduzida);
-  assert.equal(r.data.parcelaIntegral, 564.55); assert.equal(r.data.parcelaReduzida, 337.27);
+  assert.equal(r.data.parcelaIntegral, 564.54); assert.equal(r.data.parcelaReduzida, 337.27);
 
   r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, cpf: '11111111111', tipo: 'imovel', credito: 100000 } });
   assert.equal(r.status, 400);
