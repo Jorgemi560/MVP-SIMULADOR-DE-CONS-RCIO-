@@ -1,5 +1,4 @@
 'use strict';
-process.env.DB_FILE = ':memory:';
 process.env.ADMIN_PASSWORD = 'segredo-teste';
 process.env.PAYMENT_PROVIDER = 'pix';
 process.env.PIX_CHAVE = '11222333000181';

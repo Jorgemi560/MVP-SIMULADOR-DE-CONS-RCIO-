@@ -2,15 +2,21 @@
 
 Tráfego → pagamento de R$ 5,00 (Pix) → simulação → captura de lead → qualificação → WhatsApp.
 
-Mobile-first, **zero dependências** (Node ≥ 22.13, SQLite embutido).
+Mobile-first. Node ≥ 22.13, banco **PostgreSQL** (externo em produção; uma única dependência de execução, o driver `pg`).
 
 ```bash
 cp .env.example .env   # ajuste ADMIN_PASSWORD etc.
-PAYMENT_PROVIDER=mock npm start   # teste local: http://localhost:3000 (admin: /admin, senha admin123 só em desenvolvimento)
+npm install
+PAYMENT_PROVIDER=mock npm start   # teste local, sem DATABASE_URL usa um PostgreSQL embutido (PGlite) em memória; com PGLITE_DIR guarda numa pasta: http://localhost:3000 (admin: /admin, senha admin123 só em desenvolvimento)
 npm test
 ```
 
 Para publicar na internet, veja o [DEPLOY.md](DEPLOY.md).
+
+## Banco de dados
+- **Produção:** PostgreSQL externo, definido em `DATABASE_URL` (Neon, Supabase, Render Postgres…). Sem `DATABASE_URL` o servidor **não inicia** em produção. As tabelas são criadas sozinhas na primeira inicialização. O servidor não guarda nada em disco, então deploys e reinícios do Render não apagam dados.
+- **Desenvolvimento/testes:** sem `DATABASE_URL`, usa o PGlite (PostgreSQL embutido). Os testes rodam nos dois (`npm test`; para testar num Postgres de verdade, defina `DATABASE_URL` e use um banco vazio).
+- **Dados antigos (SQLite do disco do Render):** `DATABASE_URL=... npm run migrar:sqlite -- /data/simulador.db`. Só roda se o PostgreSQL ainda não tiver leads e nunca altera o arquivo SQLite.
 
 ## Fluxo
 Home → checkout (nome/e-mail/WhatsApp) → Pix → tipo → crédito → dados (inclui renda mensal) → capacidade mensal →
@@ -36,5 +42,5 @@ Havendo vários planos para o tipo/valor, usa-se o de menor parcela. **Os planos
 - `PAYMENT_PROVIDER=mock`: só desenvolvimento; bloqueado com `NODE_ENV=production`.
 
 ## Notas
-- Dados pessoais (CPF, etc.) ficam no SQLite (`data/`); proteja o disco/backup e publique política de privacidade (LGPD).
+- Dados pessoais (CPF, etc.) ficam no PostgreSQL: proteja a URL do banco (`DATABASE_URL`), confira o backup do provedor e publique política de privacidade (LGPD).
 - Textos evitam "aprovado"/"contemplação garantida"; o resultado traz aviso de que é estimativa.

@@ -1,22 +1,32 @@
 # Publicar em ganhemaisno.online (passo a passo)
 
-**Resumo:** hospedagem num serviço com disco persistente (Render, ~US$ 7/mês + ~US$ 0,25 por GB de disco — confirme os preços atuais no site) + DNS do domínio na GoDaddy apontando para ela. O HTTPS (cadeado) é gratuito e automático. Não precisa comprar hospedagem GoDaddy, e-mail, SSL nem o plano pago do site.
+**Resumo:** o site roda no Render e os dados ficam num **banco PostgreSQL externo** (Neon, Supabase ou Render Postgres). Nenhum dado fica no disco do servidor: novos deploys e reinícios não apagam leads. O domínio na GoDaddy aponta para o Render. O HTTPS (cadeado) é gratuito e automático. Não precisa comprar hospedagem GoDaddy, e-mail, SSL nem o plano pago do site. **Não é preciso disco no Render.**
 
-> Não use plano grátis: o disco dele apaga a cada atualização e os leads seriam perdidos.
+> Preços e limites dos planos mudam: confirme nos sites dos provedores antes de contratar.
 
 ## 1. Preparar o código
 O projeto está no GitHub (`jorgemi560/MVP-SIMULADOR-DE-CONS-RCIO-`, branch `claude/charming-davinci-t7zlwy`). Faça o deploy dessa branch ou, melhor, junte-a à `main` (Pull request → Merge) e use a `main`.
 
 ## 2. Criar o serviço no Render
+
+### Passo 0: criar o banco PostgreSQL (antes de qualquer deploy)
+Escolha **um** provedor (todos têm plano gratuito ou barato; confira limites e política de backup):
+- **Neon** (neon.tech): crie um projeto; em *Connection Details* copie a **Connection string** (`postgresql://...?sslmode=require`).
+- **Supabase** (supabase.com): crie um projeto; em *Connect* copie a URI de conexão (use a do *pooler* se o Render reclamar de conexão) e troque `[YOUR-PASSWORD]` pela senha do projeto.
+- **Render Postgres**: *New → PostgreSQL*, na mesma conta e região do serviço; copie a **Internal Database URL** (o plano grátis do Render costuma expirar: confira antes de usar para dados reais).
+
+Dicas: escolha a região mais próxima do seu serviço no Render; a senha vai dentro da URL (**não a envie a ninguém**; ela só vai nas variáveis do Render). As tabelas são criadas sozinhas na primeira inicialização, e os planos iniciais também.
+
 1. Crie conta em render.com e conecte o GitHub (autorize só esse repositório).
 2. **New → Web Service** → escolha o repositório e a branch.
 3. **Language/Runtime: Docker** (ele usa o `Dockerfile` do projeto). **Instance Type: Starter**.
 4. **Health Check Path:** `/healthz`.
-5. **Disks → Add Disk:** nome `dados`, **Mount Path `/data`**, 1 GB. (É onde ficam os leads.)
+5. **Não adicione disco.** O banco é externo (Passo 0).
 6. **Environment Variables** (Settings → Environment):
 
 | Nome | Valor |
 |---|---|
+| `DATABASE_URL` | a URL do PostgreSQL do Passo 0. **Obrigatória:** sem ela o serviço não inicia em produção |
 | `ADMIN_PASSWORD` | senha forte, 10+ caracteres (será a do `/admin`) |
 | `PAYMENT_PROVIDER` | `pix` |
 | `PIX_CHAVE` | chave Pix da conta que vai receber (hoje: a conta de testes) |
@@ -24,9 +34,10 @@ O projeto está no GitHub (`jorgemi560/MVP-SIMULADOR-DE-CONS-RCIO-`, branch `cla
 | `PIX_CIDADE` | cidade do titular |
 | `PUBLIC_URL` | `https://ganhemaisno.online` |
 | `PIX_WEBHOOK_SECRET` | *(opcional)* segredo de 16+ caracteres, só se um banco/automação for confirmar pagamentos sozinho |
+| `DATABASE_SSL` | *(opcional)* `off`, `on` ou `insecure`. O padrão (`on`, verificado) serve para Neon e Supabase; use `off` só se o provedor mandar |
 | `WHATSAPP_ESPECIALISTA` | *(opcional)* WhatsApp do especialista, com DDD; também dá para definir em `/admin → Configurações` |
 
-O Dockerfile já define `NODE_ENV=production`, `DB_FILE=/data/simulador.db` e `TRUST_PROXY_HOPS=1`. Se `PIX_CHAVE` ou `PIX_RECEBEDOR` faltarem, o site abre normalmente, mas o pagamento fica **bloqueado** (o cliente vê "Pagamento temporariamente indisponível") e o `/admin` mostra um aviso vermelho; o log também avisa.
+O Dockerfile já define `NODE_ENV=production` e `TRUST_PROXY_HOPS=1`. Se `PIX_CHAVE` ou `PIX_RECEBEDOR` faltarem, o site abre normalmente, mas o pagamento fica **bloqueado** (o cliente vê "Pagamento temporariamente indisponível") e o `/admin` mostra um aviso vermelho; o log também avisa.
 
 7. **Create Web Service.** Quando terminar, abra o endereço `https://NOME.onrender.com` e confira o site.
 
@@ -110,13 +121,26 @@ Salve (o serviço reinicia sozinho) e faça um Pix de teste de R$ 5,00: no app d
 - **Planos de Simulação** e **Configurações** (WhatsApp do especialista, link do guia).
 
 ## 8. Rotina
-- **Cópia de segurança:** exporte o CSV toda semana. Os leads ficam no disco `/data` do Render; sem o disco montado eles se perdem a cada deploy (o painel avisa se detectar isso).
+- **Cópia de segurança:** os leads ficam no PostgreSQL; confira o backup que o seu plano do provedor oferece (alguns planos grátis têm pouco ou nenhum). Faça também um backup seu: `pg_dump "$DATABASE_URL" -Fc -f backup.dump` (no seu computador, com o cliente do Postgres instalado) e o CSV do `/admin` toda semana.
 - **Conferir Pix:** os leads com pagamento "conferir" precisam da sua confirmação, olhando o extrato.
-- **Atualizar o site:** cada `push` na branch do deploy atualiza o serviço (leva ~1–2 min; o disco `/data` é preservado).
+- **Atualizar o site:** cada `push` na branch do deploy atualiza o serviço (leva ~1–2 min; os dados ficam no banco externo e não são afetados).
 
 ## 9. Exclusão de dados pessoais (LGPD)
 No `/admin`, clique na linha do lead → **Excluir cadastro…** → escolha o motivo → digite `EXCLUIR` → **Excluir definitivamente**.
 - **O que é apagado, sem volta:** nome, WhatsApp, e-mail, CPF, nascimento, nome da mãe, cidade, renda, valores e resultado da simulação. O lead some das listas, do CSV e do PDF, e o link do cliente deixa de funcionar.
 - **O que fica:** só o registro financeiro do pagamento (data e valor de R$ 5,00, sem identificação), para a contabilidade, e um registro de que a exclusão aconteceu (data e motivo, sem dados pessoais).
-- **O que o sistema não alcança:** CSVs e PDFs que você já baixou, a conversa no WhatsApp com o especialista, e cópias de segurança do disco do Render. Apague esses itens à parte.
+- **O que o sistema não alcança:** CSVs e PDFs que você já baixou, a conversa no WhatsApp com o especialista, e as cópias de segurança do provedor do banco (guardam versões antigas por alguns dias, conforme o plano; no PostgreSQL, linhas alteradas só somem de vez depois da limpeza automática do banco). Apague esses itens à parte.
 - **Ao atender um pedido do titular:** confirme a identidade de quem pede antes de excluir, responda dentro do prazo da LGPD (consulte seu advogado sobre o prazo) e guarde apenas o registro de que o pedido foi atendido.
+
+## 10. Mudando do SQLite (disco do Render) para o PostgreSQL
+**Se ainda não há leads de clientes reais, pule este passo:** crie o banco (Passo 0), defina `DATABASE_URL`, faça o deploy e remova o disco depois.
+
+**Se já há leads reais no disco antigo**, siga esta ordem para não perder nada:
+1. Crie o PostgreSQL e **defina `DATABASE_URL`** no Render. **Não remova o disco ainda.**
+2. Faça o deploy desta versão (ela inicia no PostgreSQL, vazio, com os planos iniciais).
+3. No Render, abra o serviço → **Shell** e rode: `node scripts/migrar-sqlite-para-postgres.js /data/simulador.db`.
+   O script copia leads, pagamentos, planos e configurações **mantendo os mesmos números**, **substitui os planos de exemplo pelos seus** e **só roda se o PostgreSQL ainda não tiver leads** (se alguém já se cadastrou depois do deploy, ele recusa e não mexe em nada; fale comigo). Ele nunca altera o arquivo SQLite.
+4. Confira no `/admin` se os leads e planos apareceram.
+5. Só então remova o disco (Settings → Disks). Guarde o arquivo antes, se quiser.
+
+**Atenção à ordem:** sem `DATABASE_URL` definida, a nova versão não inicia. Se isso acontecer, o site fica fora do ar até você definir a variável (o log mostra a mensagem). Por isso a variável vem **antes** do deploy.

@@ -88,7 +88,7 @@ async function mostrarAlertas() {
     const av = [], info = [];
     if (st.pagamento.provedor === 'pix' && !st.pagamento.pronto) av.push('<b>Pagamento indisponível:</b> defina <code>PIX_CHAVE</code> e <code>PIX_RECEBEDOR</code> nas variáveis do Render. Enquanto isso, ninguém consegue pagar.');
     else if (st.pagamento.conta) info.push(`<b>Conta que recebe os pagamentos Pix:</b> ${esc(st.pagamento.conta.recebedor)} · chave ${esc(st.pagamento.conta.chave)}. Confira se é a conta correta; o titular é definido pela chave Pix (<code>PIX_CHAVE</code>).`);
-    if (!st.banco.persistente) av.push('<b>Atenção:</b> o banco de dados não está em disco persistente. Os leads serão perdidos no próximo deploy. Monte um disco em <code>/data</code> no Render.');
+    if (!st.banco.persistente) av.push('<b>Atenção:</b> o banco de dados atual é local e não persistente (somente para testes). Os leads seriam perdidos. Defina <code>DATABASE_URL</code> com o PostgreSQL externo.');
     if (st.senhaFraca) av.push('A senha do painel tem menos de 10 caracteres. Troque a variável <code>ADMIN_PASSWORD</code> por uma mais forte.');
     if (st.pagamento.confirmacao === 'manual' && st.aConferir) av.push(`<b>${st.aConferir} pagamento(s) a conferir.</b> Confira o recebimento no extrato do banco e confirme no cadastro do lead. O cliente só é liberado depois da confirmação.`);
     el.innerHTML = info.map((m) => `<div class="alerta info">${m}</div>`).join('') + av.map((m) => `<div class="alerta ${/Pagamento indisponível/.test(m) ? 'erro' : ''}">${m}</div>`).join('');

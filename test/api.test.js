@@ -1,5 +1,4 @@
 'use strict';
-process.env.DB_FILE = ':memory:';
 process.env.ADMIN_PASSWORD = 'segredo-teste';
 process.env.PAYMENT_PROVIDER = 'mock';
 process.env.TRUST_PROXY_HOPS = '1';
@@ -199,11 +198,11 @@ test('valor da simulação: 500 centavos (R$ 5,00) na cobrança, no banco e na c
 test('PRICE_CENTS inválido impede a inicialização (nunca cobra valor errado)', () => {
   const { spawnSync } = require('node:child_process');
   for (const v of ['5', '5.5', '0', 'abc', '99999999']) {
-    const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server')"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, DB_FILE: ':memory:', PAYMENT_PROVIDER: 'mock', PRICE_CENTS: v }, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server')"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, PAYMENT_PROVIDER: 'mock', PRICE_CENTS: v }, encoding: 'utf8' });
     assert.notEqual(r.status, 0, `PRICE_CENTS=${v} deveria falhar`);
     assert.match(r.stderr, /PRICE_CENTS inválido/);
   }
-  const ok = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server');process.exit(0)"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, DB_FILE: ':memory:', PAYMENT_PROVIDER: 'mock', PRICE_CENTS: '500' }, encoding: 'utf8' });
+  const ok = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server');process.exit(0)"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, PAYMENT_PROVIDER: 'mock', PRICE_CENTS: '500' }, encoding: 'utf8' });
   assert.equal(ok.status, 0);
 });
 
@@ -230,7 +229,7 @@ test('botão do especialista: link wa.me/5541997446032 com nome, crédito, renda
 });
 
 test('exclusão de lead (LGPD): exige login e confirmação, anonimiza dados pessoais e preserva só o registro financeiro', async () => {
-  const { db } = require('../lib/db');
+  const { um } = require('../lib/db');
   const { data } = await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } });
   const A = { Authorization: `Bearer ${data.token}` };
   const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.60' }, body: { nome: 'Pessoa Para Excluir', telefone: '41944443333', email: 'excluir@x.com' } });
@@ -247,7 +246,7 @@ test('exclusão de lead (LGPD): exige login e confirmação, anonimiza dados pes
 
   assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: { confirmar: 'EXCLUIR', motivo: 'solicitacao_titular' } })).status, 200);
 
-  const linha = db.prepare('SELECT * FROM leads WHERE id = ?').get(id);
+  const linha = await um('SELECT * FROM leads WHERE id = ?', [id]);
   for (const c of ['email', 'telefone', 'cpf', 'nascimento', 'nome_mae', 'cidade', 'estado', 'tipo', 'credito', 'renda_mensal', 'capacidade_label', 'simulacao', 'resultado', 'interesse']) {
     assert.ok(linha[c] === null || linha[c] === '', `${c} deveria estar vazio`);
   }
@@ -255,10 +254,10 @@ test('exclusão de lead (LGPD): exige login e confirmação, anonimiza dados pes
   assert.equal(linha.status, 'excluido');
   assert.ok(linha.excluido_em);
   assert.notEqual(linha.token, co.data.token);
-  const pg = db.prepare('SELECT * FROM pagamentos WHERE lead_id = ?').get(id);
+  const pg = await um('SELECT * FROM pagamentos WHERE lead_id = ?', [id]);
   assert.equal(pg.valor_centavos, 500);                                                                                        // registro financeiro preservado
   assert.equal(pg.status, 'pago');
-  const ex = db.prepare('SELECT * FROM exclusoes WHERE lead_id = ?').get(id);
+  const ex = await um('SELECT * FROM exclusoes WHERE lead_id = ?', [id]);
   assert.equal(ex.motivo, 'solicitacao_titular');
   assert.ok(!JSON.stringify(ex).includes('Pessoa'));                                                                           // log sem dados pessoais
 

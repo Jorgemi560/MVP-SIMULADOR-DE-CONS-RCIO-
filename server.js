@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
-const { db, getConfig, setConfig, persistencia } = require('./lib/db');
+const { pronto: bancoPronto, todos, um, exec, tx, getConfig, setConfig, persistencia } = require('./lib/db');
 const { provider, codigoPix, contaPix } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
@@ -25,8 +25,8 @@ if (!process.env.ADMIN_PASSWORD) console.warn('⚠ ADMIN_PASSWORD não definida:
 const SENHA_FRACA = IS_PROD && ADMIN_PASSWORD.length < 10;
 if (SENHA_FRACA) console.warn('⚠ ADMIN_PASSWORD tem menos de 10 caracteres: use uma senha mais forte.');
 const PERSISTENCIA = persistencia();
-console.log(`Banco de dados: ${process.env.DB_FILE || 'data/simulador.db'} (disco persistente: ${PERSISTENCIA.persistente ? 'sim' : 'NÃO'})`);
-if (!PERSISTENCIA.persistente && IS_PROD) console.warn('⚠ Banco de dados SEM disco persistente: os leads serão perdidos no próximo deploy. Monte um disco em /data.');
+console.log(`Banco de dados: ${PERSISTENCIA.tipo}${PERSISTENCIA.host ? ` (${PERSISTENCIA.host})` : ''}`);
+if (!PERSISTENCIA.persistente && IS_PROD) console.warn('⚠ Banco de dados local, sem persistência: os leads seriam perdidos. Defina DATABASE_URL.');
 const ADMIN_SECRET = crypto.createHash('sha256').update(`adm:${ADMIN_PASSWORD}`).digest();
 
 // A simulação só é liberada com pagamento CONFIRMADO ('pago'). 'informado' (cliente avisou que pagou)
@@ -99,41 +99,43 @@ function checkAdmin(req) {
 }
 
 // ---------- leads / pagamento ----------
-function leadAutenticado(req, id) {
-  const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(Number(id));
+async function leadAutenticado(req, id) {
+  const lead = Number.isInteger(Number(id)) ? await um('SELECT * FROM leads WHERE id = ?', [Number(id)]) : null;
   const tok = req.headers['x-lead-token'] || '';
   if (!lead || lead.excluido_em || !safeEq(tok, lead.token)) throw new HttpError(404, 'Simulação não encontrada');
   return lead;
 }
-const ultimoPagamento = (leadId) => db.prepare('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1').get(leadId);
+const ultimoPagamento = (leadId) => um('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [leadId]);
 
-function marcarPago(pagamentoId) {
-  const pg = db.prepare('SELECT * FROM pagamentos WHERE id = ?').get(pagamentoId);
+async function marcarPago(pagamentoId) {
+  const pg = await um('SELECT * FROM pagamentos WHERE id = ?', [pagamentoId]);
   if (!pg || pg.status === 'pago') return;
-  db.prepare("UPDATE pagamentos SET status='pago', pago_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(pg.id);
-  db.prepare("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'").run(pg.lead_id);
+  await tx(async (t) => {
+    await t.exec("UPDATE pagamentos SET status='pago', pago_em=now() WHERE id=?", [pg.id]);
+    await t.exec("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'", [pg.lead_id]);
+  });
 }
 
 async function sincronizarPagamento(pg) {
   if (pg.status === 'pendente' && pg.provedor === provider.nome && pg.provedor_id && provider.nome !== 'mock') {
     const novo = await provider.consultar(pg.provedor_id);
-    if (novo === 'pago') marcarPago(pg.id);
-    else if (novo !== 'pendente') db.prepare('UPDATE pagamentos SET status=? WHERE id=?').run(novo, pg.id);
+    if (novo === 'pago') await marcarPago(pg.id);
+    else if (novo !== 'pendente') await exec('UPDATE pagamentos SET status=? WHERE id=?', [novo, pg.id]);
   }
-  return db.prepare('SELECT status FROM pagamentos WHERE id=?').get(pg.id).status;
+  return (await um('SELECT status FROM pagamentos WHERE id=?', [pg.id])).status;
 }
 
 // Número do especialista (destino do atendimento). Pode ser alterado em /admin → Configurações.
 const ESPECIALISTA_PADRAO = V.digits(process.env.WHATSAPP_ESPECIALISTA) || '5541997446032';
 
-function whatsappEspecialista() {
-  const configurado = V.digits(getConfig().whatsapp);
+async function whatsappEspecialista() {
+  const configurado = V.digits((await getConfig()).whatsapp);
   const num = configurado || ESPECIALISTA_PADRAO;
   return { numero: num.startsWith('55') ? num : `55${num}`, origem: configurado ? 'configurado' : 'padrao' };
 }
 
-function whatsappUrl(lead, texto) {
-  const { numero } = whatsappEspecialista();
+async function whatsappUrl(lead, texto) {
+  const { numero } = await whatsappEspecialista();
   if (!numero) return null;
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
@@ -167,7 +169,7 @@ route('GET', '/api/config', async () => ({
 route('GET', '/api/plano-info', async (req, { url }) => {
   const tipo = url.searchParams.get('tipo'), credito = Number(url.searchParams.get('credito'));
   if (!TIPOS.includes(tipo) || !(credito > 0)) throw bad('Parâmetros inválidos');
-  const planos = db.prepare('SELECT * FROM planos WHERE ativo = 1').all();
+  const planos = await todos('SELECT * FROM planos WHERE ativo = 1');
   const esc = escolherPlano(planos, tipo, credito);
   return { disponivel: !!esc, reduzida: !!esc?.calc.parcelaReduzida };
 });
@@ -181,22 +183,25 @@ route('POST', '/api/checkout', async (req, { body }) => {
   if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
 
   const token = crypto.randomBytes(24).toString('hex');
-  const leadId = Number(db.prepare('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?)').run(token, nome, email, telefone).lastInsertRowid);
-  const pagId = Number(db.prepare('INSERT INTO pagamentos (lead_id, provedor, valor_centavos) VALUES (?,?,?)').run(leadId, provider.nome, PRICE_CENTS).lastInsertRowid);
+  const { leadId, pagId } = await tx(async (t) => {
+    const l = await t.um('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?) RETURNING id', [token, nome, email, telefone]);
+    const p = await t.um('INSERT INTO pagamentos (lead_id, provedor, valor_centavos) VALUES (?,?,?) RETURNING id', [l.id, provider.nome, PRICE_CENTS]);
+    return { leadId: l.id, pagId: p.id };
+  });
   try {
     const r = await provider.criar({ pagamentoId: pagId, valorCentavos: PRICE_CENTS, email, nome });
-    db.prepare('UPDATE pagamentos SET provedor_id=? WHERE id=?').run(r.provedorId, pagId);
+    await exec('UPDATE pagamentos SET provedor_id=? WHERE id=?', [r.provedorId, pagId]);
     return { leadId, token, status: 'pendente', pix: r.pix, mock: provider.nome === 'mock' };
   } catch (e) {
     console.error('Falha ao criar pagamento:', e.message);
-    db.prepare("UPDATE pagamentos SET status='cancelado' WHERE id=?").run(pagId);
+    await exec("UPDATE pagamentos SET status='cancelado' WHERE id=?", [pagId]);
     throw new HttpError(502, 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
   }
 });
 
 route('GET', '/api/lead/:id/estado', async (req, { params }) => {
-  const lead = leadAutenticado(req, params.id);
-  const pg = ultimoPagamento(lead.id);
+  const lead = await leadAutenticado(req, params.id);
+  const pg = await ultimoPagamento(lead.id);
   const status = pg ? await sincronizarPagamento(pg) : 'pendente';
   return {
     pagamento: status, liberado: pagamentoLiberado(status),
@@ -207,22 +212,22 @@ route('GET', '/api/lead/:id/estado', async (req, { params }) => {
 
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
   if (provider.nome !== 'mock') throw new HttpError(404, 'Não encontrado');
-  const lead = leadAutenticado(req, params.id);
-  const pg = ultimoPagamento(lead.id);
-  marcarPago(pg.id);
+  const lead = await leadAutenticado(req, params.id);
+  const pg = await ultimoPagamento(lead.id);
+  await marcarPago(pg.id);
   return { pagamento: 'pago' };
 });
 
 route('POST', '/api/lead/:id/informar-pagamento', async (req, { params }) => {
   if (provider.nome !== 'pix') throw new HttpError(404, 'Não encontrado');
   limit(req, 'informar', 10, 600000);
-  const lead = leadAutenticado(req, params.id);
-  const pg = ultimoPagamento(lead.id);
+  const lead = await leadAutenticado(req, params.id);
+  const pg = await ultimoPagamento(lead.id);
   if (pg.status === 'pendente') {
-    db.prepare("UPDATE pagamentos SET status='informado' WHERE id=?").run(pg.id);
-    db.prepare("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'").run(lead.id);
+    await exec("UPDATE pagamentos SET status='informado' WHERE id=?", [pg.id]);
+    await exec("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'", [lead.id]);
   }
-  return { pagamento: db.prepare('SELECT status FROM pagamentos WHERE id=?').get(pg.id).status };
+  return { pagamento: (await um('SELECT status FROM pagamentos WHERE id=?', [pg.id])).status };
 });
 
 // Confirmação automática por serviço autorizado (banco/PSP/automação). Desativado sem PIX_WEBHOOK_SECRET.
@@ -234,10 +239,10 @@ route('POST', '/api/webhooks/pix', async (req, { body }) => {
   if (!safeEq(req.headers['x-webhook-secret'] || '', segredo)) throw new HttpError(401, 'Não autorizado');
   const m = /^SIM(\d{1,12})$/.exec(String(body.txid ?? ''));
   if (!m) throw bad('txid inválido');
-  const pg = db.prepare("SELECT * FROM pagamentos WHERE id = ? AND provedor = 'pix'").get(Number(m[1]));
+  const pg = await um("SELECT * FROM pagamentos WHERE id = ? AND provedor = 'pix'", [Number(m[1])]);
   if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
   if (!(Number(body.valor_centavos) >= pg.valor_centavos)) throw bad('Valor inferior ao cobrado');
-  marcarPago(pg.id);
+  await marcarPago(pg.id);
   return { ok: true };
 });
 
@@ -246,15 +251,15 @@ route('POST', '/api/webhooks/mercadopago', async (req, { body, url }) => {
   const id = body?.data?.id ?? url.searchParams.get('data.id') ?? url.searchParams.get('id');
   if (!id || !/^\d+$/.test(String(id))) return { ok: true };
   // Não confiamos no corpo: consultamos o status direto na API do provedor.
-  const pg = db.prepare('SELECT * FROM pagamentos WHERE provedor = ? AND provedor_id = ?').get('mercadopago', String(id));
+  const pg = await um('SELECT * FROM pagamentos WHERE provedor = ? AND provedor_id = ?', ['mercadopago', String(id)]);
   if (pg) await sincronizarPagamento(pg);
   return { ok: true };
 });
 
 route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
   limit(req, 'simular', 30, 600000);
-  const lead = leadAutenticado(req, params.id);
-  const pg = ultimoPagamento(lead.id);
+  const lead = await leadAutenticado(req, params.id);
+  const pg = await ultimoPagamento(lead.id);
   if (!pg || !pagamentoLiberado(await sincronizarPagamento(pg))) throw new HttpError(402, 'Pagamento não confirmado.');
 
   const tipo = body.tipo, credito = Number(body.credito);
@@ -279,7 +284,7 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
   if (!(capValor > 0 && capValor <= 10_000_000)) throw bad('Informe quanto pretende investir por mês.');
   const capLabel = String(body.capacidade_label ?? '').slice(0, 60) || brl(capValor);
 
-  const planos = db.prepare('SELECT * FROM planos WHERE ativo = 1').all();
+  const planos = await todos('SELECT * FROM planos WHERE ativo = 1');
   const esc = escolherPlano(planos, tipo, credito);
   const reducaoDisponivel = !!esc?.calc.parcelaReduzida;
   const escolha = body.parcela === 'reduzida' && reducaoDisponivel ? 'reduzida' : 'integral';
@@ -290,15 +295,15 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
     ? `${escolha === 'reduzida' ? 'Reduzida' : 'Integral'} ${brl(parcelaBase)} — ${parcelaBase <= capValor ? 'cabe' : 'acima do'} orçamento`
     : 'Sem plano para este valor';
 
-  db.prepare(`UPDATE leads SET nome=?, email=?, telefone=?, cpf=?, nascimento=?, nome_mae=?, cidade=?, estado=?, tipo=?, credito=?, renda_mensal=?,
-      capacidade_label=?, capacidade_valor=?, parcela_escolhida=?, plano_id=?, simulacao=?, resultado=?, simulado_em=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-      status=CASE WHEN status='aguardando_pagamento' THEN 'novo' ELSE status END WHERE id=?`)
-    .run(nome, email, telefone, cpf, body.nascimento, String(body.nome_mae).trim(), cidade, estado, tipo, credito, renda,
-      capLabel, capValor, escolha, esc?.plano.id ?? null, sim ? JSON.stringify(sim) : null, resultado, lead.id);
+  await exec(`UPDATE leads SET nome=?, email=?, telefone=?, cpf=?, nascimento=?, nome_mae=?, cidade=?, estado=?, tipo=?, credito=?, renda_mensal=?,
+      capacidade_label=?, capacidade_valor=?, parcela_escolhida=?, plano_id=?, simulacao=?, resultado=?, simulado_em=now(),
+      status=CASE WHEN status='aguardando_pagamento' THEN 'novo' ELSE status END WHERE id=?`,
+    [nome, email, telefone, cpf, body.nascimento, String(body.nome_mae).trim(), cidade, estado, tipo, credito, renda,
+      capLabel, capValor, escolha, esc?.plano.id ?? null, sim ? JSON.stringify(sim) : null, resultado, lead.id]);
 
-  const salvo = db.prepare('SELECT * FROM leads WHERE id=?').get(lead.id);
+  const salvo = await um('SELECT * FROM leads WHERE id=?', [lead.id]);
   return {
-    whatsappUrl: whatsappUrl(salvo, textoWhatsapp(salvo)),
+    whatsappUrl: await whatsappUrl(salvo, textoWhatsapp(salvo)),
     primeiroNome: nome.split(/\s+/)[0], tipo, credito, escolha,
     disponivel: !!sim,
     parcelaIntegral: sim?.parcelaIntegral ?? null,
@@ -311,15 +316,15 @@ route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
 });
 
 route('POST', '/api/lead/:id/interesse', async (req, { body, params }) => {
-  const lead = leadAutenticado(req, params.id);
+  const lead = await leadAutenticado(req, params.id);
   if (!lead.simulacao && !lead.tipo) throw bad('Conclua a simulação primeiro.');
   if (!INTERESSES.includes(body.interesse)) throw bad('Valor inválido.');
-  db.prepare('UPDATE leads SET interesse=? WHERE id=?').run(body.interesse, lead.id);
-  const atual = db.prepare('SELECT * FROM leads WHERE id=?').get(lead.id);
+  await exec('UPDATE leads SET interesse=? WHERE id=?', [body.interesse, lead.id]);
+  const atual = await um('SELECT * FROM leads WHERE id=?', [lead.id]);
   return {
     ok: true,
-    whatsappUrl: body.interesse === 'agora' ? whatsappUrl(atual, textoWhatsapp(atual)) : null,
-    learnUrl: getConfig().learn_url || null,
+    whatsappUrl: body.interesse === 'agora' ? await whatsappUrl(atual, textoWhatsapp(atual)) : null,
+    learnUrl: (await getConfig()).learn_url || null,
   };
 });
 
@@ -359,17 +364,17 @@ function filtrosLeads(sp) {
   }
   return { where: cond.length ? `WHERE ${cond.join(' AND ')}` : '', args };
 }
-function listarLeads(sp, limite) {
+async function listarLeads(sp, limite) {
   const { where, args } = filtrosLeads(sp);
-  const leads = db.prepare(`SELECT ${LEAD_LISTA} ${LEAD_BASE} ${where} ORDER BY l.id DESC LIMIT ?`).all(...args, limite);
-  const total = db.prepare(`SELECT COUNT(*) n ${LEAD_BASE} ${where}`).get(...args).n;
+  const leads = await todos(`SELECT ${LEAD_LISTA} ${LEAD_BASE} ${where} ORDER BY l.id DESC LIMIT ?`, [...args, limite]);
+  const total = (await um(`SELECT COUNT(*)::int AS n ${LEAD_BASE} ${where}`, args)).n;
   return { leads, total };
 }
-const contarAConferir = () => db.prepare("SELECT COUNT(*) n FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE p.status = 'informado' AND l.excluido_em IS NULL").get().n;
+const contarAConferir = async () => (await um("SELECT COUNT(*)::int AS n FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE p.status = 'informado' AND l.excluido_em IS NULL")).n;
 
 route('GET', '/api/admin/leads', async (req, { url }) => {
   checkAdmin(req);
-  return { ...listarLeads(url.searchParams, 500), aConferir: contarAConferir() };
+  return { ...(await listarLeads(url.searchParams, 500)), aConferir: await contarAConferir() };
 });
 
 // Exportação em CSV (Excel/Google Planilhas, separador ";"). Por privacidade NÃO inclui CPF, nascimento nem nome da mãe.
@@ -377,13 +382,13 @@ const CSV_COLS = [['id', 'ID'], ['criado_em', 'Cadastro'], ['simulado_em', 'Data
   ['renda_mensal', 'Renda mensal'], ['credito', 'Crédito desejado'], ['tipo', 'Tipo'], ['capacidade_label', 'Capacidade mensal'], ['parcela_escolhida', 'Parcela escolhida'],
   ['resultado', 'Resultado'], ['interesse', 'Interesse'], ['status', 'Status do lead'], ['pagamento_status', 'Situação do pagamento'], ['valor_centavos', 'Valor pago (centavos)'], ['pago_em', 'Pago em']];
 const csvCell = (v) => {
-  let t = v == null ? '' : typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+  let t = v == null ? '' : v instanceof Date ? v.toISOString() : typeof v === 'number' ? String(v).replace('.', ',') : String(v);
   if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; // evita execução de fórmula ao abrir na planilha
   return `"${t.replace(/"/g, '""')}"`;
 };
 route('GET', '/api/admin/leads.csv', async (req, { url }) => {
   checkAdmin(req);
-  const { leads } = listarLeads(url.searchParams, 100000);
+  const { leads } = await listarLeads(url.searchParams, 100000);
   const linhas = leads.map((l) => CSV_COLS.map(([c]) => csvCell(l[c])).join(';'));
   return { __csv: `﻿${CSV_COLS.map(([, r]) => r).join(';')}\r\n${linhas.join('\r\n')}\r\n` };
 });
@@ -395,8 +400,8 @@ const SITUACAO_PAG = {
 const INTERESSE_LABEL = { agora: 'Quer fazer agora (quente)', conversar: 'Quer conversar (morno)', depois: 'Ainda não (frio)' };
 const fmtData = (iso) => (iso ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)).replace(', ', ' ') : '');
 
-function leadCompleto(id) {
-  const l = db.prepare(`SELECT l.*, p.valor_centavos, p.status AS pagamento_status, p.pago_em ${LEAD_BASE} WHERE l.id = ?`).get(Number(id));
+async function leadCompleto(id) {
+  const l = Number.isInteger(Number(id)) ? await um(`SELECT l.*, p.valor_centavos, p.status AS pagamento_status, p.pago_em ${LEAD_BASE} WHERE l.id = ?`, [Number(id)]) : null;
   if (!l || l.excluido_em) throw new HttpError(404, 'Lead não encontrado');
   return l;
 }
@@ -404,7 +409,7 @@ function leadCompleto(id) {
 // Relatório individual em PDF (sem CPF, nascimento ou nome da mãe).
 route('GET', '/api/admin/leads/:id\\.pdf', async (req, { params }) => {
   checkAdmin(req);
-  const l = leadCompleto(params.id);
+  const l = await leadCompleto(params.id);
   const sim = l.simulacao ? JSON.parse(l.simulacao) : null;
   const [situacao, corSit] = SITUACAO_PAG[l.pagamento_status] || ['—', 'neutro'];
   const reduzida = l.parcela_escolhida === 'reduzida';
@@ -422,7 +427,7 @@ route('GET', '/api/admin/leads/:id\\.pdf', async (req, { params }) => {
 // Detalhes de um cadastro (inclui dados sensíveis; só sob demanda e com login).
 route('GET', '/api/admin/leads/:id', async (req, { params }) => {
   checkAdmin(req);
-  const l = leadCompleto(params.id);
+  const l = await leadCompleto(params.id);
   const sim = l.simulacao ? JSON.parse(l.simulacao) : null;
   const { token, simulacao, ...lead } = l; // nunca devolve o token do cliente
   return { lead, simulacao: sim ? { plano: sim.plano, prazo: sim.prazo, parcelaIntegral: sim.parcelaIntegral, parcelaReduzida: sim.parcelaReduzida, indice: sim.indice } : null };
@@ -430,23 +435,23 @@ route('GET', '/api/admin/leads/:id', async (req, { params }) => {
 
 route('GET', '/api/admin/status', async (req) => {
   checkAdmin(req);
-  const w = whatsappEspecialista();
+  const w = await whatsappEspecialista();
   return {
-    banco: { tipo: 'SQLite', persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
+    banco: { tipo: PERSISTENCIA.tipo, persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
     senhaFraca: SENHA_FRACA,
     pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
     whatsapp: { numero: fmtTel(w.numero.replace(/^55/, '')), origem: w.origem },
-    aConferir: contarAConferir(),
+    aConferir: await contarAConferir(),
   };
 });
 
 route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) => {
   checkAdmin(req);
-  leadCompleto(params.id); // 404 se o lead não existe ou já foi excluído
-  const pg = ultimoPagamento(Number(params.id));
+  await leadCompleto(params.id); // 404 se o lead não existe ou já foi excluído
+  const pg = await ultimoPagamento(Number(params.id));
   if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
-  if (body.acao === 'confirmar') marcarPago(pg.id);
-  else if (body.acao === 'recusar') db.prepare("UPDATE pagamentos SET status='recusado' WHERE id=?").run(pg.id);
+  if (body.acao === 'confirmar') await marcarPago(pg.id);
+  else if (body.acao === 'recusar') await exec("UPDATE pagamentos SET status='recusado' WHERE id=?", [pg.id]);
   else throw bad('Ação inválida');
   return { ok: true };
 });
@@ -458,20 +463,17 @@ route('DELETE', '/api/admin/leads/:id', async (req, { body, params }) => {
   checkAdmin(req);
   limit(req, 'excluir-lead', 30, 600000);
   const id = Number(params.id);
-  const lead = db.prepare('SELECT id, excluido_em FROM leads WHERE id = ?').get(id);
+  const lead = Number.isInteger(id) ? await um('SELECT id, excluido_em FROM leads WHERE id = ?', [id]) : null;
   if (!lead || lead.excluido_em) throw new HttpError(404, 'Lead não encontrado');
   if (body.confirmar !== 'EXCLUIR') throw bad('Confirmação ausente: digite EXCLUIR para apagar os dados pessoais.');
   const motivo = MOTIVOS_EXCLUSAO.includes(body.motivo) ? body.motivo : 'outro';
-  db.exec('BEGIN');
-  try {
-    db.prepare(`UPDATE leads SET nome='[cadastro excluído]', email='', telefone='', token=?, cpf=NULL, nascimento=NULL, nome_mae=NULL,
+  await tx(async (t) => { // tudo ou nada
+    await t.exec(`UPDATE leads SET nome='[cadastro excluído]', email='', telefone='', token=?, cpf=NULL, nascimento=NULL, nome_mae=NULL,
       cidade=NULL, estado=NULL, tipo=NULL, credito=NULL, renda_mensal=NULL, capacidade_label=NULL, capacidade_valor=NULL, parcela_escolhida=NULL,
       plano_id=NULL, simulacao=NULL, resultado=NULL, interesse=NULL, status='excluido', simulado_em=NULL,
-      excluido_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(crypto.randomBytes(24).toString('hex'), id);
-    db.prepare('INSERT INTO exclusoes (lead_id, motivo) VALUES (?, ?)').run(id, motivo);
-    db.exec('COMMIT');
-  } catch (e) { db.exec('ROLLBACK'); throw e; }
-  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* melhor esforço */ }
+      excluido_em=now() WHERE id=?`, [crypto.randomBytes(24).toString('hex'), id]);
+    await t.exec('INSERT INTO exclusoes (lead_id, motivo) VALUES (?, ?)', [id, motivo]);
+  });
   console.log(`Lead ${id} excluído (motivo: ${motivo}).`); // sem dados pessoais no log
   return { ok: true };
 });
@@ -479,7 +481,7 @@ route('DELETE', '/api/admin/leads/:id', async (req, { body, params }) => {
 route('PATCH', '/api/admin/leads/:id', async (req, { body, params }) => {
   checkAdmin(req);
   if (!STATUS_LEAD.includes(body.status)) throw bad('Status inválido');
-  db.prepare('UPDATE leads SET status=? WHERE id=? AND excluido_em IS NULL').run(body.status, Number(params.id));
+  await exec('UPDATE leads SET status=? WHERE id=? AND excluido_em IS NULL', [body.status, Number(params.id)]);
   return { ok: true };
 });
 
@@ -507,22 +509,22 @@ function planoDoCorpo(b) {
 }
 const COLS = ['nome', 'tipo', 'prazo', 'taxa_admin', 'fundo_reserva', 'seguro', 'indice', 'reduzida', 'reducao_pct', 'reducao_regra', 'reducao_meses', 'arredondamento', 'regra_texto', 'credito_min', 'credito_max', 'ativo'];
 
-route('GET', '/api/admin/planos', async (req) => { checkAdmin(req); return { planos: db.prepare('SELECT * FROM planos ORDER BY tipo, id').all() }; });
+route('GET', '/api/admin/planos', async (req) => { checkAdmin(req); return { planos: await todos('SELECT * FROM planos ORDER BY tipo, id') }; });
 route('POST', '/api/admin/planos', async (req, { body }) => {
   checkAdmin(req);
   const p = planoDoCorpo(body);
-  const id = Number(db.prepare(`INSERT INTO planos (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`).run(...COLS.map((c) => p[c])).lastInsertRowid);
+  const id = (await um(`INSERT INTO planos (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')}) RETURNING id`, COLS.map((c) => p[c]))).id;
   return { id };
 });
 route('PUT', '/api/admin/planos/:id', async (req, { body, params }) => {
   checkAdmin(req);
   const p = planoDoCorpo(body);
-  db.prepare(`UPDATE planos SET ${COLS.map((c) => `${c}=?`).join(',')} WHERE id=?`).run(...COLS.map((c) => p[c]), Number(params.id));
+  await exec(`UPDATE planos SET ${COLS.map((c) => `${c}=?`).join(',')} WHERE id=?`, [...COLS.map((c) => p[c]), Number(params.id)]);
   return { ok: true };
 });
 route('DELETE', '/api/admin/planos/:id', async (req, { params }) => {
   checkAdmin(req);
-  db.prepare('DELETE FROM planos WHERE id=?').run(Number(params.id));
+  await exec('DELETE FROM planos WHERE id=?', [Number(params.id)]);
   return { ok: true };
 });
 route('POST', '/api/admin/planos-teste', async (req, { body }) => { // pré-visualiza o cálculo de um plano
@@ -532,8 +534,8 @@ route('POST', '/api/admin/planos-teste', async (req, { body }) => { // pré-visu
 
 route('GET', '/api/admin/config', async (req) => {
   checkAdmin(req);
-  const w = whatsappEspecialista();
-  return { ...getConfig(), whatsapp_em_uso: fmtTel(w.numero.replace(/^55/, '')), whatsapp_origem: w.origem };
+  const w = await whatsappEspecialista();
+  return { ...(await getConfig()), whatsapp_em_uso: fmtTel(w.numero.replace(/^55/, '')), whatsapp_origem: w.origem };
 });
 route('PUT', '/api/admin/config', async (req, { body }) => {
   checkAdmin(req);
@@ -541,7 +543,7 @@ route('PUT', '/api/admin/config', async (req, { body }) => {
   if (w && !V.telefoneValido(w)) throw bad('WhatsApp inválido');
   const url = String(body.learn_url ?? '').trim();
   if (url && !/^https?:\/\//i.test(url)) throw bad('O link deve começar com http:// ou https://');
-  setConfig('whatsapp', w); setConfig('learn_url', url);
+  await setConfig('whatsapp', w); await setConfig('learn_url', url);
   return { ok: true };
 });
 
@@ -576,7 +578,10 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/admin') || url.pathname.startsWith('/api/')) res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   try {
-    if (url.pathname === '/healthz') { db.prepare('SELECT 1').get(); res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
+    await bancoPronto;
+    // /healthz: o servidor só começa a escutar depois que o banco respondeu e as tabelas existem. Não consulta o banco a cada
+    // verificação: uma falha momentânea do provedor não faz o Render reiniciar o serviço à toa.
+    if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if (!url.pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Método não permitido');
       let caminho;
@@ -607,6 +612,13 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`Simulador de Consórcio em http://localhost:${PORT}  (pagamento: ${provider.nome})  admin: /admin`));
+  bancoPronto
+    .then(() => server.listen(PORT, () => console.log(`Simulador de Consórcio em http://localhost:${PORT}  (pagamento: ${provider.nome})  admin: /admin`)))
+    .catch((e) => { console.error('Não foi possível iniciar o banco de dados:', e.message); process.exit(1); });
+  // O Render envia SIGTERM em cada deploy/reinício: encerra com calma (termina requisições e fecha as conexões do banco).
+  process.on('SIGTERM', () => {
+    setTimeout(() => process.exit(0), 8000).unref();
+    server.close(() => require('./lib/db').fechar().catch(() => {}).finally(() => process.exit(0)));
+  });
 }
 module.exports = { server };
