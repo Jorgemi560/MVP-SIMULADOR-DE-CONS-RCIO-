@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { db, getConfig, setConfig, persistencia } = require('./lib/db');
-const { provider, codigoPix } = require('./lib/payment');
+const { provider, codigoPix, contaPix } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
@@ -25,6 +25,7 @@ if (!process.env.ADMIN_PASSWORD) console.warn('⚠ ADMIN_PASSWORD não definida:
 const SENHA_FRACA = IS_PROD && ADMIN_PASSWORD.length < 10;
 if (SENHA_FRACA) console.warn('⚠ ADMIN_PASSWORD tem menos de 10 caracteres: use uma senha mais forte.');
 const PERSISTENCIA = persistencia();
+console.log(`Banco de dados: ${process.env.DB_FILE || 'data/simulador.db'} (disco persistente: ${PERSISTENCIA.persistente ? 'sim' : 'NÃO'})`);
 if (!PERSISTENCIA.persistente && IS_PROD) console.warn('⚠ Banco de dados SEM disco persistente: os leads serão perdidos no próximo deploy. Monte um disco em /data.');
 const ADMIN_SECRET = crypto.createHash('sha256').update(`adm:${ADMIN_PASSWORD}`).digest();
 
@@ -173,6 +174,7 @@ route('GET', '/api/plano-info', async (req, { url }) => {
 
 route('POST', '/api/checkout', async (req, { body }) => {
   limit(req, 'checkout', 10, 600000);
+  if (!provider.pronto()) throw new HttpError(503, 'Pagamento temporariamente indisponível. Tente novamente em alguns minutos.');
   const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
   if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
   if (!V.emailValido(email)) throw bad('E-mail inválido.');
@@ -432,7 +434,7 @@ route('GET', '/api/admin/status', async (req) => {
   return {
     banco: { tipo: 'SQLite', persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
     senhaFraca: SENHA_FRACA,
-    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
+    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
     whatsapp: { numero: fmtTel(w.numero.replace(/^55/, '')), origem: w.origem },
     aConferir: contarAConferir(),
   };

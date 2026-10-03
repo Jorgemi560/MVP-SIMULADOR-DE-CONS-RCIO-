@@ -290,8 +290,8 @@ test('preço: nenhum "R$ 5" sem centavos nos textos do site e a página inicial 
     assert.ok(!/R\$\s?5(?![\d,.])/.test(txt), `${f} ainda tem "R$ 5" sem ,00`);
   }
   const app = fs.readFileSync(path.join(raiz, 'public/app.js'), 'utf8');
-  assert.ok(app.includes('DESCUBRA <em>QUANTO PODE FICAR</em> A SUA PARCELA DE CONSÓRCIO POR APENAS <b class="gold">${PRECO_TXT}</b>!'));
-  assert.ok(app.includes('Faça uma simulação personalizada para o crédito que você deseja e tenha uma estimativa das suas parcelas.'));
+  assert.ok(app.includes('Descubra <em>quanto pode ficar</em> a parcela do consórcio que você procura.'));
+  assert.ok(app.includes('Faça sua simulação personalizada por apenas <b class="gold">${PRECO_TXT}</b>.'));
   assert.ok(app.includes('FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}'));
   assert.ok(app.includes("let PRECO_TXT = 'R$ 5,00'"));
 });

@@ -84,13 +84,9 @@ T.home = () => `
     <div class="hero">
       <div class="hero-in">
         <p class="eyebrow"><span>${ICONES.casa} Imóvel</span><i aria-hidden="true"></i><span>${ICONES.carro} Veículo</span></p>
-        <h1>DESCUBRA <em>QUANTO PODE FICAR</em> A SUA PARCELA DE CONSÓRCIO POR APENAS <b class="gold">${PRECO_TXT}</b>!</h1>
-        <p class="lead">Faça uma simulação personalizada para o crédito que você deseja e tenha uma estimativa das suas parcelas.</p>
+        <h1>Descubra <em>quanto pode ficar</em> a parcela do consórcio que você procura.</h1>
         <div class="offer">
-          <div class="offer-price-row">
-            <p class="offer-price">${PRECO_TXT}</p>
-            <p class="offer-label">simulação personalizada<br>pagamento único por Pix</p>
-          </div>
+          <p class="offer-text">Faça sua simulação personalizada por apenas <b class="gold">${PRECO_TXT}</b>.</p>
           <button class="btn cta" data-act="comecar"><span>FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}</span><i>${ICONES.seta}</i></button>
           <p class="offer-note"><span>${ICONES.relogio} Leva menos de 2 minutos</span><span>${ICONES.cadeado} Pagamento seguro por Pix</span></p>
         </div>

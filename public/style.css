@@ -128,3 +128,10 @@ body.is-home main{max-width:none;padding:0}
 @media (max-width:380px){.btn.cta{font-size:1rem;padding:12px}}
 @media (max-height:700px) and (max-width:480px){.hero .lead{margin:12px auto 14px}.offer{padding:12px 12px 10px}.offer-price-row{margin-bottom:10px}}
 @media (prefers-reduced-motion:reduce){.btn.cta{animation:none;transition:none}}
+
+/* Página inicial: título e oferta (versão final) */
+.hero h1{text-transform:uppercase;font-size:clamp(1.85rem,8vw,2.9rem);line-height:1.08;margin-bottom:20px}
+.offer{background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.07))}
+.offer-text{color:#fff;font-size:clamp(1.25rem,5.6vw,1.7rem);line-height:1.35;font-weight:800;margin:2px 0 16px;text-wrap:balance}
+.offer-text .gold{font-size:1.15em;margin-top:0;vertical-align:baseline}
+@media (min-width:760px){.hero h1{font-size:3.2rem}}

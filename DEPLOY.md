@@ -26,7 +26,7 @@ O projeto está no GitHub (`jorgemi560/MVP-SIMULADOR-DE-CONS-RCIO-`, branch `cla
 | `PIX_WEBHOOK_SECRET` | *(opcional)* segredo de 16+ caracteres, só se um banco/automação for confirmar pagamentos sozinho |
 | `WHATSAPP_ESPECIALISTA` | *(opcional)* WhatsApp do especialista, com DDD; também dá para definir em `/admin → Configurações` |
 
-O Dockerfile já define `NODE_ENV=production`, `DB_FILE=/data/simulador.db` e `TRUST_PROXY_HOPS=1`. Se `PIX_CHAVE` ou `PIX_RECEBEDOR` faltarem, o serviço **não inicia** e o log explica o motivo.
+O Dockerfile já define `NODE_ENV=production`, `DB_FILE=/data/simulador.db` e `TRUST_PROXY_HOPS=1`. Se `PIX_CHAVE` ou `PIX_RECEBEDOR` faltarem, o site abre normalmente, mas o pagamento fica **bloqueado** (o cliente vê "Pagamento temporariamente indisponível") e o `/admin` mostra um aviso vermelho; o log também avisa.
 
 7. **Create Web Service.** Quando terminar, abra o endereço `https://NOME.onrender.com` e confira o site.
 
@@ -85,8 +85,23 @@ O Pix usa uma chave estática, e o sistema **não enxerga o extrato do banco**. 
 
 Confirmação automática (futuro): `POST /api/webhooks/pix` com o cabeçalho `X-Webhook-Secret` e o corpo `{"txid":"SIM12","valor_centavos":500}` confirma o pagamento (o `txid` é o campo 62/05 do código Pix). Só funciona se o banco/automação enviar o `txid`. Alternativa: `PAYMENT_PROVIDER=mercadopago` (confirmação 100% automática, precisa de conta e token do Mercado Pago).
 
-## 6. Trocar a conta Pix de testes pela conta definitiva
-Nenhum código muda. No Render → Environment, altere `PIX_CHAVE`, `PIX_RECEBEDOR` e `PIX_CIDADE` para os dados da nova conta e salve (o serviço reinicia sozinho). Depois faça um Pix de R$ 5,00 de teste e confira se cai na conta nova. Leads e pagamentos antigos continuam intactos.
+## 6. Em qual conta o Pix cai (e por que aparece o nome de outra empresa)
+**Quem recebe é sempre o titular da CHAVE Pix.** O sistema monta o código com a chave que está na variável `PIX_CHAVE`; o banco do cliente procura essa chave e mostra o **titular real dela** na tela de confirmação ("Pagar para: NOME"). O texto de `PIX_RECEBEDOR` só entra no código e **não muda para onde o dinheiro vai**. Por isso, se aparece o nome de uma empresa, é porque a chave configurada pertence a ela. Esconder o nome na tela não mudaria nada, e o sistema nunca faz isso.
+
+Duas causas possíveis para o nome "errado":
+1. `PIX_CHAVE` no Render é a chave da empresa de testes (é a configuração provisória atual).
+2. O Render ainda roda uma versão **antiga** do código (anterior a 03/10/2026), que usava a conta de testes como padrão quando as variáveis não estavam definidas. Veja em Events qual commit está no ar.
+
+**Para receber na conta correta**, no Render → Environment:
+| Variável | O que colocar |
+|---|---|
+| `PIX_CHAVE` | uma chave Pix **cadastrada na conta que deve receber** (CNPJ, e-mail, telefone ou chave aleatória, como está no app do banco). **É isto que define o destino do dinheiro.** |
+| `PIX_RECEBEDOR` | nome do titular dessa conta, como no banco |
+| `PIX_CIDADE` | cidade do titular |
+
+Salve (o serviço reinicia sozinho) e faça um Pix de teste de R$ 5,00: no app do banco, confira o nome do titular **antes de confirmar** e, depois, veja se o valor caiu na conta certa. No `/admin` há um aviso azul "Conta que recebe os pagamentos Pix" com o recebedor e o final da chave em uso, para você conferir a qualquer momento (o cliente não vê isso).
+
+**Conta definitiva (Cispect):** quando ela tiver conta e chave Pix, é só trocar as três variáveis acima. Nenhum código muda, e leads e pagamentos antigos continuam intactos. A confirmação continua manual (ou por webhook/Mercado Pago, veja a seção 5).
 
 ## 7. Painel `/admin`
 - **Buscar** por nome, telefone ou e-mail; **filtrar** por período do cadastro e situação do pagamento; chips de interesse (quentes/mornos/frios).

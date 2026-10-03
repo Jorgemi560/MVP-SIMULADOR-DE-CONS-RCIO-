@@ -109,3 +109,14 @@ test('Pix: "não recebi" bloqueia; webhook autorizado confirma por txid e valor'
   assert.equal((await call(`/api/lead/${c2.leadId}/estado`, { headers: { 'X-Lead-Token': c2.token } })).data.liberado, true);
   assert.ok(pgId > 0);
 });
+
+test('admin vê qual conta recebe (chave mascarada); o cliente nunca vê dados da conta', async () => {
+  const A = { Authorization: `Bearer ${(await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } })).data.token}` };
+  const st = (await call('/api/admin/status', { headers: A })).data;
+  assert.equal(st.pagamento.pronto, true);
+  assert.equal(st.pagamento.conta.recebedor, 'EMPRESA DE TESTE LTDA');
+  assert.equal(st.pagamento.conta.chave, '11•••0181');
+  assert.ok(!JSON.stringify(st).includes('11222333000181'));          // chave completa nunca é devolvida
+  assert.equal((await call('/api/admin/status')).status, 401);
+  assert.equal((await call('/api/config')).data.recebedor, undefined); // endpoint público sem dados da conta
+});
