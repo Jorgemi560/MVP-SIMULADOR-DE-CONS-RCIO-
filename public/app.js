@@ -67,13 +67,40 @@ async function busy(btn, fn) {
 // ---- telas ----
 const T = {};
 
+const IC = (d, extra = '') => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${d}</svg>`;
+const ICONES = {
+  casa: IC('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'),
+  carro: IC('<path d="M5 16l1.5-5.2A2 2 0 0 1 8.4 9.4h7.2a2 2 0 0 1 1.9 1.4L19 16"/><path d="M3.5 16h17v3h-17z"/><circle cx="7.5" cy="19" r="1.2"/><circle cx="16.5" cy="19" r="1.2"/>'),
+  relogio: IC('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  cadeado: IC('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  seta: IC('<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>'),
+  escolher: IC('<path d="M4 7h16M4 12h16M4 17h10"/>'),
+  valor: IC('<path d="M12 3v18"/><path d="M16 7.5c0-1.7-1.8-3-4-3s-4 1.1-4 2.8c0 4 8 2 8 6.2 0 1.8-1.8 3-4 3s-4-1.3-4-3"/>'),
+  resultado: IC('<path d="M5 12l4 4 10-10"/>'),
+};
+
 T.home = () => `
-  <section class="screen center">
-    <h1>Está pensando em fazer um consórcio de imóvel ou veículo?</h1>
-    <p class="sub">Faça uma simulação personalizada e descubra uma estimativa da parcela para o crédito que você procura.</p>
-    <div class="price-tag">SIMULAÇÃO PERSONALIZADA — <b>${PRECO_TXT}</b></div>
-    <button class="btn" data-act="comecar">FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}</button>
-    <p class="hint">Leva menos de 2 minutos.</p>
+  <section class="screen home">
+    <div class="hero">
+      <div class="hero-in">
+        <p class="eyebrow"><span>${ICONES.casa} Imóvel</span><i aria-hidden="true"></i><span>${ICONES.carro} Veículo</span></p>
+        <h1>QUANTO CUSTARIA REALIZAR SEU SONHO? <span class="h1-2">DESCUBRA POR APENAS <b class="gold">${PRECO_TXT}</b>!</span></h1>
+        <p class="lead">Faça uma simulação personalizada de consórcio de imóvel ou veículo e descubra uma estimativa de parcelas para o crédito que você deseja.</p>
+        <div class="offer">
+          <p class="offer-label">SIMULAÇÃO PERSONALIZADA POR APENAS</p>
+          <p class="offer-price">${PRECO_TXT}</p>
+          <button class="btn cta" data-act="comecar"><span>QUERO MINHA SIMULAÇÃO POR ${PRECO_TXT}</span>${ICONES.seta}</button>
+          <p class="offer-note"><span>${ICONES.relogio} Leva menos de 2 minutos</span><span>${ICONES.cadeado} Pagamento seguro por Pix</span></p>
+        </div>
+      </div>
+    </div>
+    <div class="how">
+      <ol class="how-in">
+        <li><b>${ICONES.escolher}</b><strong>Escolha</strong><span>imóvel ou veículo</span></li>
+        <li><b>${ICONES.valor}</b><strong>Informe</strong><span>o crédito que você deseja</span></li>
+        <li><b>${ICONES.resultado}</b><strong>Receba</strong><span>a estimativa de parcelas</span></li>
+      </ol>
+    </div>
   </section>`;
 
 T.checkout = () => `
@@ -387,6 +414,7 @@ A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead
 
 // ---- render ----
 function render() {
+  document.body.classList.toggle('is-home', S.tela === 'home');
   // Guardas de fluxo: não pular etapas após recarregar a página
   const precisaLead = !['home', 'checkout'].includes(S.tela);
   if (precisaLead && !S.lead) S.tela = 'checkout';
