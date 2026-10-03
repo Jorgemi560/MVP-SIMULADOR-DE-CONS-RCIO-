@@ -30,19 +30,50 @@ O Dockerfile já define `NODE_ENV=production`, `DB_FILE=/data/simulador.db` e `T
 
 7. **Create Web Service.** Quando terminar, abra o endereço `https://NOME.onrender.com` e confira o site.
 
-## 3. Domínio na GoDaddy
-1. GoDaddy → **Meus Produtos** → `ganhemaisno.online` → **DNS / Gerenciar DNS**.
-2. **Liberar o domínio do site grátis:** se os registros `A @` e `CNAME www` aparecem como "WebsiteBuilder Site"/"Parked" e não deixam editar, desconecte o domínio no painel do site (Websites + Marketing → Configurações → Domínio → desconectar) ou exclua o site grátis. Depois apague o `A @` antigo e o `CNAME www` antigo.
-3. **Não mexa** em registros `MX` e `TXT` (e-mail), se existirem.
-4. No Render: **Settings → Custom Domains → Add** `ganhemaisno.online` e também `www.ganhemaisno.online`. O Render mostra os registros exatos a criar (use os valores que ele mostrar, não copie de outro lugar):
-   - `A` com nome `@` → IP indicado pelo Render
-   - `CNAME` com nome `www` → `NOME.onrender.com`
-5. Volte à GoDaddy e crie esses dois registros (TTL padrão/1 hora).
-6. No Render, clique em **Verify**. Pode levar de minutos a algumas horas. O certificado HTTPS é emitido sozinho.
-7. Se a GoDaddy não aceitar o `A @`, use só `www` (CNAME) e, em **Domínio → Encaminhamento**, encaminhe `ganhemaisno.online` para `https://www.ganhemaisno.online` (301).
+## 3. Domínio na GoDaddy (ganhemaisno.online)
+
+**Como o DNS está hoje** (consulta feita em 03/10/2026): os servidores de nomes são os da GoDaddy (`ns09/ns10.domaincontrol.com`), então é na GoDaddy que se edita. `ganhemaisno.online` tem dois registros `A` (`13.248.243.5` e `76.223.105.230`), e `www` é um `CNAME` para `ganhemaisno.online`. Não há registros de e-mail (`MX`) nem `TXT`. Ou seja: o domínio ainda aponta para o site grátis da GoDaddy e **não** para o Render.
+
+**Você não precisa inventar valor nenhum: quem informa os valores certos é o próprio Render.**
+
+**Passo 1: pedir os registros ao Render**
+1. Render → seu serviço → **Settings → Custom Domains → Add Custom Domain**.
+2. Digite `ganhemaisno.online` e confirme. Repita com `www.ganhemaisno.online`.
+3. Para cada domínio o Render mostra uma tabela com **Type**, **Name** e **Value**. Anote exatamente o que aparecer. Normalmente é:
+
+| Tipo | Nome (Host) na GoDaddy | Valor |
+|---|---|---|
+| `A` | `@` | o endereço IP que o Render mostrar para `ganhemaisno.online` |
+| `CNAME` | `www` | o endereço `algo.onrender.com` que o Render mostrar para `www.ganhemaisno.online` |
+
+Se o Render mostrar um tipo diferente (por exemplo `ALIAS`/`ANAME` para `@`, que a GoDaddy não aceita), use só o `www` e a alternativa do Passo 6.
+
+**Passo 2: anotar os registros atuais (para poder desfazer)**
+1. Entre em godaddy.com → **Meus Produtos** → ao lado de `ganhemaisno.online`, **DNS** (ou *Gerenciar DNS*).
+2. Tire um print da lista de registros.
+
+**Passo 3: liberar o domínio do site grátis**
+1. Se os registros `A` aparecerem como "WebsiteBuilder Site" ou "Parked" e **não deixarem editar**, o domínio está ligado ao site grátis. Desligue em **Websites + Marketing → seu site → Configurações → Domínio** (desconectar), ou exclua o site grátis.
+2. Volte ao **DNS**.
+
+**Passo 4: trocar os registros** (na tela DNS da GoDaddy)
+1. **Apague os dois registros `A` de nome `@`** (`13.248.243.5` e `76.223.105.230`), ou edite um deles e apague o outro.
+2. **Crie o `A`:** *Adicionar novo registro* → Tipo `A` → Nome `@` → Valor = o IP do Render → TTL 1 hora (ou o padrão) → Salvar.
+3. **Troque o `www`:** apague o `CNAME www` que aponta para `ganhemaisno.online` e crie `CNAME` → Nome `www` → Valor = o endereço `.onrender.com` do Render → Salvar. (Também pode editar o existente.)
+4. **Não mexa** nos servidores de nomes (NS) nem em outros registros que não sejam esses.
+
+**Passo 5: verificar**
+1. Volte ao Render → Custom Domains → clique em **Verify** nos dois domínios. Pode levar de alguns minutos a algumas horas; o certificado HTTPS (cadeado) é emitido sozinho depois.
+2. Confira em dnschecker.org (tipo `A` para `ganhemaisno.online` e `CNAME` para `www.ganhemaisno.online`) se já mostram os valores do Render.
+3. Abra `https://ganhemaisno.online` e `https://www.ganhemaisno.online` no celular. Os dois devem abrir o simulador com cadeado (o Render costuma redirecionar um para o outro).
+4. Só depois que o HTTPS funcionar nos dois, ajuste no Render a variável `PUBLIC_URL` para `https://ganhemaisno.online` (ela liga o HSTS, que obriga HTTPS nos navegadores).
+
+**Passo 6 (só se a GoDaddy não aceitar o `A @`):** use apenas o `CNAME www` do Render e, na GoDaddy, em **Domínio → Encaminhamento**, encaminhe `ganhemaisno.online` para `https://www.ganhemaisno.online` (permanente, 301). O encaminhamento da GoDaddy bloqueia o `A @`; é esperado.
+
+**Se algo der errado:** recrie os registros do print do Passo 2 e o site grátis volta.
 
 ## 4. Testar antes de anunciar
-1. Abra o site no celular e faça uma simulação pagando **R$ 5 de verdade** pelo Pix.
+1. Abra o site no celular e faça uma simulação pagando **R$ 5,00 de verdade** pelo Pix.
 2. Entre em `https://ganhemaisno.online/admin`, veja o lead, confirme o recebimento (sem isso a simulação não libera) e confira os planos.
 3. Em **Configurações**, confirme o WhatsApp do especialista e o link do guia.
 
@@ -55,7 +86,7 @@ O Pix usa uma chave estática, e o sistema **não enxerga o extrato do banco**. 
 Confirmação automática (futuro): `POST /api/webhooks/pix` com o cabeçalho `X-Webhook-Secret` e o corpo `{"txid":"SIM12","valor_centavos":500}` confirma o pagamento (o `txid` é o campo 62/05 do código Pix). Só funciona se o banco/automação enviar o `txid`. Alternativa: `PAYMENT_PROVIDER=mercadopago` (confirmação 100% automática, precisa de conta e token do Mercado Pago).
 
 ## 6. Trocar a conta Pix de testes pela conta definitiva
-Nenhum código muda. No Render → Environment, altere `PIX_CHAVE`, `PIX_RECEBEDOR` e `PIX_CIDADE` para os dados da nova conta e salve (o serviço reinicia sozinho). Depois faça um Pix de R$ 5 de teste e confira se cai na conta nova. Leads e pagamentos antigos continuam intactos.
+Nenhum código muda. No Render → Environment, altere `PIX_CHAVE`, `PIX_RECEBEDOR` e `PIX_CIDADE` para os dados da nova conta e salve (o serviço reinicia sozinho). Depois faça um Pix de R$ 5,00 de teste e confira se cai na conta nova. Leads e pagamentos antigos continuam intactos.
 
 ## 7. Painel `/admin`
 - **Buscar** por nome, telefone ou e-mail; **filtrar** por período do cadastro e situação do pagamento; chips de interesse (quentes/mornos/frios).
@@ -67,3 +98,10 @@ Nenhum código muda. No Render → Environment, altere `PIX_CHAVE`, `PIX_RECEBED
 - **Cópia de segurança:** exporte o CSV toda semana. Os leads ficam no disco `/data` do Render; sem o disco montado eles se perdem a cada deploy (o painel avisa se detectar isso).
 - **Conferir Pix:** os leads com pagamento "conferir" precisam da sua confirmação, olhando o extrato.
 - **Atualizar o site:** cada `push` na branch do deploy atualiza o serviço (leva ~1–2 min; o disco `/data` é preservado).
+
+## 9. Exclusão de dados pessoais (LGPD)
+No `/admin`, clique na linha do lead → **Excluir cadastro…** → escolha o motivo → digite `EXCLUIR` → **Excluir definitivamente**.
+- **O que é apagado, sem volta:** nome, WhatsApp, e-mail, CPF, nascimento, nome da mãe, cidade, renda, valores e resultado da simulação. O lead some das listas, do CSV e do PDF, e o link do cliente deixa de funcionar.
+- **O que fica:** só o registro financeiro do pagamento (data e valor de R$ 5,00, sem identificação), para a contabilidade, e um registro de que a exclusão aconteceu (data e motivo, sem dados pessoais).
+- **O que o sistema não alcança:** CSVs e PDFs que você já baixou, a conversa no WhatsApp com o especialista, e cópias de segurança do disco do Render. Apague esses itens à parte.
+- **Ao atender um pedido do titular:** confirme a identidade de quem pede antes de excluir, responda dentro do prazo da LGPD (consulte seu advogado sobre o prazo) e guarde apenas o registro de que o pedido foi atendido.

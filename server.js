@@ -13,7 +13,11 @@ const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
 
 const PORT = Number(process.env.PORT) || 3000;
-const PRICE_CENTS = Number(process.env.PRICE_CENTS) || 500;
+// Valor da simulação em CENTAVOS (500 = R$ 5,00). Valor inválido impede a inicialização: nunca cobramos um valor errado.
+const PRICE_CENTS = process.env.PRICE_CENTS ? Number(process.env.PRICE_CENTS) : 500;
+if (!Number.isInteger(PRICE_CENTS) || PRICE_CENTS < 100 || PRICE_CENTS > 100000) {
+  throw new Error(`PRICE_CENTS inválido (${process.env.PRICE_CENTS}): informe o valor em centavos, de 100 a 100000 (R$ 5,00 = 500).`);
+}
 const IS_PROD = process.env.NODE_ENV === 'production';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (IS_PROD ? '' : 'admin123');
 if (!ADMIN_PASSWORD) throw new Error('ADMIN_PASSWORD é obrigatória em produção');
@@ -30,6 +34,7 @@ const pagamentoLiberado = (status) => status === 'pago';
 
 const TIPOS = ['imovel', 'veiculo', 'outros'];
 const TIPO_LABEL = { imovel: 'imóvel', veiculo: 'veículo', outros: 'outros bens' };
+const MOTIVOS_EXCLUSAO = ['solicitacao_titular', 'cadastro_duplicado_ou_teste', 'outro'];
 const INTERESSES = ['agora', 'conversar', 'depois'];
 const STATUS_LEAD = ['aguardando_pagamento', 'novo', 'contatado', 'convertido', 'perdido'];
 const brl = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -96,7 +101,7 @@ function checkAdmin(req) {
 function leadAutenticado(req, id) {
   const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(Number(id));
   const tok = req.headers['x-lead-token'] || '';
-  if (!lead || !safeEq(tok, lead.token)) throw new HttpError(404, 'Simulação não encontrada');
+  if (!lead || lead.excluido_em || !safeEq(tok, lead.token)) throw new HttpError(404, 'Simulação não encontrada');
   return lead;
 }
 const ultimoPagamento = (leadId) => db.prepare('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1').get(leadId);
@@ -332,7 +337,7 @@ const escLike = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 // Filtros do painel: busca (nome/telefone/e-mail), período (datas no horário de Brasília), situação do pagamento e interesse.
 function filtrosLeads(sp) {
-  const cond = [], args = [];
+  const cond = ['l.excluido_em IS NULL'], args = [];
   if (FILTROS[sp.get('filtro')]) cond.push(FILTROS[sp.get('filtro')]);
   if (SITUACOES.includes(sp.get('pagamento'))) { cond.push('p.status = ?'); args.push(sp.get('pagamento')); }
   const de = sp.get('de'), ate = sp.get('ate');
@@ -358,7 +363,7 @@ function listarLeads(sp, limite) {
   const total = db.prepare(`SELECT COUNT(*) n ${LEAD_BASE} ${where}`).get(...args).n;
   return { leads, total };
 }
-const contarAConferir = () => db.prepare("SELECT COUNT(*) n FROM pagamentos WHERE status = 'informado'").get().n;
+const contarAConferir = () => db.prepare("SELECT COUNT(*) n FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE p.status = 'informado' AND l.excluido_em IS NULL").get().n;
 
 route('GET', '/api/admin/leads', async (req, { url }) => {
   checkAdmin(req);
@@ -390,7 +395,7 @@ const fmtData = (iso) => (iso ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'Am
 
 function leadCompleto(id) {
   const l = db.prepare(`SELECT l.*, p.valor_centavos, p.status AS pagamento_status, p.pago_em ${LEAD_BASE} WHERE l.id = ?`).get(Number(id));
-  if (!l) throw new HttpError(404, 'Lead não encontrado');
+  if (!l || l.excluido_em) throw new HttpError(404, 'Lead não encontrado');
   return l;
 }
 
@@ -435,6 +440,7 @@ route('GET', '/api/admin/status', async (req) => {
 
 route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) => {
   checkAdmin(req);
+  leadCompleto(params.id); // 404 se o lead não existe ou já foi excluído
   const pg = ultimoPagamento(Number(params.id));
   if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
   if (body.acao === 'confirmar') marcarPago(pg.id);
@@ -443,10 +449,35 @@ route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) =>
   return { ok: true };
 });
 
+// Exclusão de dados pessoais (LGPD). Anonimiza o cadastro de forma irreversível: apaga nome, contato, CPF, nascimento,
+// nome da mãe, cidade, renda, valores e resultado da simulação. Mantém apenas o registro financeiro do pagamento
+// (sem identificação), para fins contábeis, e um registro da exclusão sem dados pessoais.
+route('DELETE', '/api/admin/leads/:id', async (req, { body, params }) => {
+  checkAdmin(req);
+  limit(req, 'excluir-lead', 30, 600000);
+  const id = Number(params.id);
+  const lead = db.prepare('SELECT id, excluido_em FROM leads WHERE id = ?').get(id);
+  if (!lead || lead.excluido_em) throw new HttpError(404, 'Lead não encontrado');
+  if (body.confirmar !== 'EXCLUIR') throw bad('Confirmação ausente: digite EXCLUIR para apagar os dados pessoais.');
+  const motivo = MOTIVOS_EXCLUSAO.includes(body.motivo) ? body.motivo : 'outro';
+  db.exec('BEGIN');
+  try {
+    db.prepare(`UPDATE leads SET nome='[cadastro excluído]', email='', telefone='', token=?, cpf=NULL, nascimento=NULL, nome_mae=NULL,
+      cidade=NULL, estado=NULL, tipo=NULL, credito=NULL, renda_mensal=NULL, capacidade_label=NULL, capacidade_valor=NULL, parcela_escolhida=NULL,
+      plano_id=NULL, simulacao=NULL, resultado=NULL, interesse=NULL, status='excluido', simulado_em=NULL,
+      excluido_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(crypto.randomBytes(24).toString('hex'), id);
+    db.prepare('INSERT INTO exclusoes (lead_id, motivo) VALUES (?, ?)').run(id, motivo);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* melhor esforço */ }
+  console.log(`Lead ${id} excluído (motivo: ${motivo}).`); // sem dados pessoais no log
+  return { ok: true };
+});
+
 route('PATCH', '/api/admin/leads/:id', async (req, { body, params }) => {
   checkAdmin(req);
   if (!STATUS_LEAD.includes(body.status)) throw bad('Status inválido');
-  db.prepare('UPDATE leads SET status=? WHERE id=?').run(body.status, Number(params.id));
+  db.prepare('UPDATE leads SET status=? WHERE id=? AND excluido_em IS NULL').run(body.status, Number(params.id));
   return { ok: true };
 });
 
@@ -548,7 +579,7 @@ const server = http.createServer(async (req, res) => {
       if (r.method !== req.method) continue;
       const m = r.re.exec(url.pathname);
       if (!m) continue;
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+      const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
       const out = await r.handler(req, { body, url, params: m.groups || {} });
       if (out && out.__pdf) {
         res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${out.__nome}"`, 'Cache-Control': 'no-store' });

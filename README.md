@@ -1,6 +1,6 @@
 # Simulador de Consórcio (MVP)
 
-Tráfego → pagamento de R$5 (Pix) → simulação → captura de lead → qualificação → WhatsApp.
+Tráfego → pagamento de R$ 5,00 (Pix) → simulação → captura de lead → qualificação → WhatsApp.
 
 Mobile-first, **zero dependências** (Node ≥ 22.13, SQLite embutido).
 

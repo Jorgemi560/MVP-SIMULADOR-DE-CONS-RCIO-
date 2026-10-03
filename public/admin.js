@@ -127,16 +127,32 @@ function detalheHtml(r) {
     <div><dt>Nome da mãe</dt><dd>${esc(l.nome_mae || '—')}</dd></div><div><dt>Cidade/UF</dt><dd>${esc(l.cidade || '—')} / ${esc(l.estado || '—')}</dd></div>
     <div><dt>Pagamento</dt><dd>${badgePag(l.pagamento_status)} ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}${pagBtns}</dd></div>
     <div><dt>Pago/confirmado em</dt><dd>${dt(l.pago_em)}</dd></div><div><dt>Cadastro</dt><dd>${dt(l.criado_em)}</dd></div><div><dt>Simulação</dt><dd>${dt(l.simulado_em)}</dd></div>
-  </dl><p class="no-print"><button class="btn sm" data-pdf="${l.id}">Gerar PDF / imprimir</button></p>`;
+  </dl><p class="no-print"><button class="btn sm" data-pdf="${l.id}">Gerar PDF / imprimir</button> <button class="btn sm ghost" data-excluir="${l.id}">Excluir cadastro…</button></p>
+  <div class="excluir-box no-print" id="ex${l.id}" hidden>
+    <p><b>Excluir os dados pessoais de ${esc(l.nome)}?</b> Esta ação é <b>definitiva e não pode ser desfeita</b>. Serão apagados nome, WhatsApp, e-mail, CPF, nascimento, nome da mãe, cidade, renda e a simulação. Fica apenas o registro financeiro do pagamento, sem identificação, e um registro de que a exclusão ocorreu.</p>
+    <div class="form-grid">
+      <div class="field"><label for="mt${l.id}">Motivo</label><select id="mt${l.id}"><option value="solicitacao_titular">Solicitação do titular dos dados</option><option value="cadastro_duplicado_ou_teste">Cadastro duplicado ou de teste</option><option value="outro">Outro</option></select></div>
+      <div class="field"><label for="cf${l.id}">Para confirmar, digite EXCLUIR</label><input id="cf${l.id}" data-confirma="${l.id}" autocomplete="off" placeholder="EXCLUIR"></div>
+    </div>
+    <p class="muted">Não é necessário digitar dados pessoais em nenhum campo. O que já foi baixado (CSV, PDF) e a conversa no WhatsApp ficam fora do sistema e precisam ser apagados à parte.</p>
+    <button class="btn sm danger" data-excluir-ok="${l.id}" disabled>Excluir definitivamente</button> <button class="btn sm ghost" data-excluir-cancela="${l.id}">Cancelar</button>
+  </div>`;
 }
 
 // Eventos da tabela (delegação; o CSP do site bloqueia atributos onclick inline)
 document.addEventListener('click', async (e) => {
   const tb = e.target.closest('#tb'); if (!tb) return;
-  const btn = e.target.closest('button[data-pg], button[data-pdf]');
+  const btn = e.target.closest('button[data-pg], button[data-pdf], button[data-excluir], button[data-excluir-ok], button[data-excluir-cancela]');
   try {
     if (btn?.dataset.pg) {
       await api(`/api/admin/leads/${btn.dataset.lead}/pagamento`, { method: 'POST', body: { acao: btn.dataset.pg } });
+      return viewLeads();
+    }
+    if (btn?.dataset.excluir) { const bx = document.getElementById(`ex${btn.dataset.excluir}`); bx.hidden = false; bx.querySelector('input').focus(); return; }
+    if (btn?.dataset.excluirCancela) { const bx = document.getElementById(`ex${btn.dataset.excluirCancela}`); bx.hidden = true; bx.querySelector('input').value = ''; bx.querySelector('[data-excluir-ok]').disabled = true; return; }
+    if (btn?.dataset.excluirOk) {
+      const id = btn.dataset.excluirOk; btn.disabled = true;
+      await api(`/api/admin/leads/${id}`, { method: 'DELETE', body: { confirmar: document.getElementById(`cf${id}`).value.trim(), motivo: document.getElementById(`mt${id}`).value } });
       return viewLeads();
     }
     if (btn?.dataset.pdf) {
@@ -153,6 +169,10 @@ document.addEventListener('click', async (e) => {
     try { det.firstElementChild.innerHTML = detalheHtml(await api(`/api/admin/leads/${tr.dataset.id}`)); det.dataset.ok = '1'; }
     catch (err) { det.firstElementChild.textContent = err.message; }
   }
+});
+document.addEventListener('input', (e) => {
+  const inp = e.target.closest('input[data-confirma]'); if (!inp) return;
+  inp.closest('.excluir-box').querySelector('[data-excluir-ok]').disabled = inp.value.trim() !== 'EXCLUIR';
 });
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('#tb select[data-st]');

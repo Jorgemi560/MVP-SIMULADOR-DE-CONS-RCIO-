@@ -45,3 +45,5 @@ tr.lead{cursor:pointer}tr.lead:hover{background:#f7faff}
   tr.det{display:none!important} /* dados sensíveis (CPF etc.) nunca saem na impressão da lista */
   a{color:#000;text-decoration:none}
 }
+.excluir-box{border:1.5px solid var(--red);background:#fff5f4;border-radius:12px;padding:14px;margin:8px 0 4px}
+.excluir-box p{margin:0 0 10px}

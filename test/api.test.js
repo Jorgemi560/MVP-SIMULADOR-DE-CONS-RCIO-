@@ -187,3 +187,86 @@ test('arquivos privados não são servidos', async () => {
   }
   assert.equal((await fetch(base + '/robots.txt')).status, 200);
 });
+
+test('valor da simulação: 500 centavos (R$ 5,00) na cobrança, no banco e na configuração pública', async () => {
+  assert.equal((await call('/api/config')).data.precoCentavos, 500);
+  const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.50' }, body: { nome: 'Preço Teste', telefone: '41987650000', email: 'preco@x.com' } });
+  const { data } = await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } });
+  const det = (await call(`/api/admin/leads/${co.data.leadId}`, { headers: { Authorization: `Bearer ${data.token}` } })).data;
+  assert.equal(det.lead.valor_centavos, 500);
+});
+
+test('PRICE_CENTS inválido impede a inicialização (nunca cobra valor errado)', () => {
+  const { spawnSync } = require('node:child_process');
+  for (const v of ['5', '5.5', '0', 'abc', '99999999']) {
+    const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server')"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, DB_FILE: ':memory:', PAYMENT_PROVIDER: 'mock', PRICE_CENTS: v }, encoding: 'utf8' });
+    assert.notEqual(r.status, 0, `PRICE_CENTS=${v} deveria falhar`);
+    assert.match(r.stderr, /PRICE_CENTS inválido/);
+  }
+  const ok = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', "require('./server');process.exit(0)"], { cwd: require('node:path').join(__dirname, '..'), env: { ...process.env, DB_FILE: ':memory:', PAYMENT_PROVIDER: 'mock', PRICE_CENTS: '500' }, encoding: 'utf8' });
+  assert.equal(ok.status, 0);
+});
+
+test('botão do especialista: link wa.me/5541997446032 com nome, crédito, renda e aviso de simulação concluída', async () => {
+  // volta à configuração padrão (testes anteriores salvaram outro número no banco em memória)
+  const adm = { Authorization: `Bearer ${(await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } })).data.token}` };
+  await call('/api/admin/config', { method: 'PUT', headers: adm, body: { whatsapp: '', learn_url: '' } });
+  const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.51' }, body: { nome: 'Marina Costa Lima', telefone: '11955554444', email: 'marina@x.com' } });
+  const h = { 'X-Lead-Token': co.data.token };
+  await call(`/api/lead/${co.data.leadId}/mock-pay`, { method: 'POST', headers: h });
+  const dados = { nome: 'Marina Costa Lima', telefone: '11955554444', email: 'marina@x.com', cpf: '52998224725', nascimento: '1990-02-02', nome_mae: 'Rita', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 2000, renda_mensal: 9300, tipo: 'veiculo', credito: 90000 };
+  const r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: dados });
+  const link = r.data.whatsappUrl;
+  assert.match(link, /^https:\/\/wa\.me\/5541997446032\?text=[^\s]+$/);   // número internacional, só dígitos, texto codificado
+  const texto = new URL(link).searchParams.get('text');
+  assert.match(texto, /concluir|Acabei de fazer minha simulação de consórcio/);
+  assert.match(texto, /Nome: Marina Costa Lima/);
+  assert.match(texto, /Crédito escolhido: R\$\s?90\.000,00/);
+  assert.match(texto, /Renda mensal: R\$\s?9\.300,00/);
+  assert.ok(!texto.includes('41997446032') && !texto.includes('99744-6032')); // o número do especialista não vai dentro da mensagem
+  // o mesmo link é devolvido ao registrar interesse
+  const i = await call(`/api/lead/${co.data.leadId}/interesse`, { method: 'POST', headers: h, body: { interesse: 'agora' } });
+  assert.equal(i.data.whatsappUrl, link);
+});
+
+test('exclusão de lead (LGPD): exige login e confirmação, anonimiza dados pessoais e preserva só o registro financeiro', async () => {
+  const { db } = require('../lib/db');
+  const { data } = await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } });
+  const A = { Authorization: `Bearer ${data.token}` };
+  const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.60' }, body: { nome: 'Pessoa Para Excluir', telefone: '41944443333', email: 'excluir@x.com' } });
+  const h = { 'X-Lead-Token': co.data.token }, id = co.data.leadId;
+  await call(`/api/lead/${id}/mock-pay`, { method: 'POST', headers: h });
+  const dados = { nome: 'Pessoa Para Excluir', telefone: '41944443333', email: 'excluir@x.com', cpf: '52998224725', nascimento: '1985-05-05', nome_mae: 'Mãe Sigilosa', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 1500, renda_mensal: 6500, tipo: 'imovel', credito: 200000, parcela: 'integral' };
+  const simEx = await call(`/api/lead/${id}/simular`, { method: 'POST', headers: h, body: dados });
+  assert.equal(simEx.status, 200, JSON.stringify(simEx.data));
+
+  assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', body: { confirmar: 'EXCLUIR' } })).status, 401);   // sem login
+  assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: {} })).status, 400);              // sem confirmação
+  assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: { confirmar: 'excluir' } })).status, 400);
+  assert.equal((await call(`/api/admin/leads/${id}`, { headers: A })).status, 200);                                            // nada foi apagado ainda
+
+  assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: { confirmar: 'EXCLUIR', motivo: 'solicitacao_titular' } })).status, 200);
+
+  const linha = db.prepare('SELECT * FROM leads WHERE id = ?').get(id);
+  for (const c of ['email', 'telefone', 'cpf', 'nascimento', 'nome_mae', 'cidade', 'estado', 'tipo', 'credito', 'renda_mensal', 'capacidade_label', 'simulacao', 'resultado', 'interesse']) {
+    assert.ok(linha[c] === null || linha[c] === '', `${c} deveria estar vazio`);
+  }
+  assert.notEqual(linha.nome, 'Pessoa Para Excluir');
+  assert.equal(linha.status, 'excluido');
+  assert.ok(linha.excluido_em);
+  assert.notEqual(linha.token, co.data.token);
+  const pg = db.prepare('SELECT * FROM pagamentos WHERE lead_id = ?').get(id);
+  assert.equal(pg.valor_centavos, 500);                                                                                        // registro financeiro preservado
+  assert.equal(pg.status, 'pago');
+  const ex = db.prepare('SELECT * FROM exclusoes WHERE lead_id = ?').get(id);
+  assert.equal(ex.motivo, 'solicitacao_titular');
+  assert.ok(!JSON.stringify(ex).includes('Pessoa'));                                                                           // log sem dados pessoais
+
+  assert.equal((await call(`/api/admin/leads/${id}`, { headers: A })).status, 404);
+  assert.equal((await fetch(`${base}/api/admin/leads/${id}.pdf`, { headers: A })).status, 404);
+  assert.equal((await call(`/api/lead/${id}/estado`, { headers: h })).status, 404);                                            // o cliente perde o acesso
+  assert.equal((await call(`/api/admin/leads?q=Excluir`, { headers: A })).data.leads.length, 0);
+  const csv = await (await fetch(`${base}/api/admin/leads.csv`, { headers: A })).text();
+  assert.ok(!csv.includes('Pessoa Para Excluir') && !csv.includes('excluir@x.com') && !csv.includes('41944443333'));
+  assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: { confirmar: 'EXCLUIR' } })).status, 404); // já excluído
+});

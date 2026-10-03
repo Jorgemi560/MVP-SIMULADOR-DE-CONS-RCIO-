@@ -3,6 +3,8 @@ const $app = document.getElementById('app');
 const $prog = document.getElementById('progress');
 const brl = (n) => Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Valor da simulação: vem do servidor (centavos), o mesmo usado na cobrança; padrão R$ 5,00.
+let PRECO_TXT = 'R$ 5,00';
 const digits = (s) => String(s || '').replace(/\D/g, '');
 
 const CREDITOS = {
@@ -69,8 +71,8 @@ T.home = () => `
   <section class="screen center">
     <h1>Está pensando em fazer um consórcio de imóvel ou veículo?</h1>
     <p class="sub">Faça uma simulação personalizada e descubra uma estimativa da parcela para o crédito que você procura.</p>
-    <div class="price-tag">SIMULAÇÃO PERSONALIZADA — <b>R$5</b></div>
-    <button class="btn" data-act="comecar">FAZER MINHA SIMULAÇÃO POR R$5</button>
+    <div class="price-tag">SIMULAÇÃO PERSONALIZADA — <b>${PRECO_TXT}</b></div>
+    <button class="btn" data-act="comecar">FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}</button>
     <p class="hint">Leva menos de 2 minutos.</p>
   </section>`;
 
@@ -78,7 +80,7 @@ T.checkout = () => `
   <section class="screen">
     <button class="back" data-act="home">← Voltar</button>
     <h2>Quase lá! Seus dados de contato</h2>
-    <p class="sub" style="margin-top:4px">Para liberar sua simulação, finalize o pagamento de <b>R$5</b> via Pix.</p>
+    <p class="sub" style="margin-top:4px">Para liberar sua simulação, finalize o pagamento de <b>${PRECO_TXT}</b> via Pix.</p>
     <form class="card" id="f-checkout" novalidate>
       <div class="field"><label for="nome">Nome completo</label><input id="nome" name="nome" autocomplete="name" value="${esc(S.contato.nome)}" required></div>
       <div class="field"><label for="tel">Telefone / WhatsApp</label><input id="tel" name="telefone" type="tel" data-mask="tel" inputmode="tel" autocomplete="tel-national" placeholder="(00) 00000-0000" maxlength="15" value="${esc(mask.tel(S.contato.telefone))}" required></div>
@@ -91,7 +93,7 @@ T.checkout = () => `
 
 T.pagamento = () => `
   <section class="screen center">
-    <h2>Pague R$5 para liberar sua simulação</h2>
+    <h2>Pague ${PRECO_TXT} para liberar sua simulação</h2>
     <div class="card" id="pay-box"><p class="loading">Gerando pagamento…</p></div>
     <p class="hint">Assim que o pagamento for confirmado, sua simulação é liberada automaticamente.</p>
   </section>`;
@@ -322,11 +324,11 @@ async function montarPagamento() {
   const pintar = () => {
     const pix = S.pix;
     box.innerHTML = `
-      <span class="pill">Valor: R$ 5,00</span>
+      <span class="pill">Valor: ${PRECO_TXT}</span>
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
       ${pix?.copiaECola && !pix.qrBase64 ? `<div class="qr" role="img" aria-label="QR Code Pix">${qrSvg(pix.copiaECola)}</div>` : ''}
       ${pix?.copiaECola ? `<p style="font-size:.9rem;margin-top:6px">Pix copia e cola:</p><div class="copy">${esc(pix.copiaECola)}</div><button class="btn ghost" data-act="copiar">COPIAR CÓDIGO PIX</button>` : ''}
-      ${S.pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague R$ 5,00 e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
+      ${S.pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague ${PRECO_TXT} e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
@@ -419,4 +421,4 @@ $app.addEventListener('submit', (e) => {
   if (e.target.id === 'f-dados') enviarDados(e.target);
 });
 
-render();
+api('/api/config').then((c) => { if (Number.isInteger(c.precoCentavos) && c.precoCentavos > 0) PRECO_TXT = brl(c.precoCentavos / 100); }).catch(() => {}).finally(render);
