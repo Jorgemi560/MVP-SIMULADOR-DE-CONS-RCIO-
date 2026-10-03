@@ -10,6 +10,8 @@ npm start              # http://localhost:3000   (admin: /admin)
 npm test
 ```
 
+Para publicar na internet, veja o [DEPLOY.md](DEPLOY.md).
+
 ## Fluxo
 Home → checkout (nome/e-mail/WhatsApp) → Pix → tipo → crédito → dados → capacidade mensal →
 (parcela integral/reduzida, só se o plano tiver redução) → processamento → resultado → intenção → WhatsApp ou "entender melhor".
