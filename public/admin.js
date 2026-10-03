@@ -2,13 +2,14 @@
 const $ = document.getElementById('adm');
 const brl = (n) => Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let token = sessionStorage.getItem('adm_token') || '';
-let aba = 'leads', filtro = 'todos';
+const SS = { get(k) { try { return sessionStorage.getItem(k); } catch { return null; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch { /* ignora */ } }, del(k) { try { sessionStorage.removeItem(k); } catch { /* ignora */ } } };
+let token = SS.get('adm_token') || '';
+let aba = 'leads';
 
 async function api(path, { method = 'GET', body } = {}) {
   const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
-  if (r.status === 401 && token) { token = ''; sessionStorage.removeItem('adm_token'); login(); throw new Error('Sessão expirada'); }
+  if (r.status === 401 && token) { token = ''; SS.del('adm_token'); login(); throw new Error('Sessão expirada'); }
   if (!r.ok) throw new Error(data.erro || 'Erro');
   return data;
 }
@@ -21,7 +22,7 @@ function login(msg = '') {
     e.preventDefault();
     try {
       const r = await api('/api/admin/login', { method: 'POST', body: { senha: e.target.senha.value } });
-      token = r.token; sessionStorage.setItem('adm_token', token); shell();
+      token = r.token; SS.set('adm_token', token); shell();
     } catch (err) { e.target.querySelector('.msg').textContent = err.message; }
   };
 }
@@ -31,7 +32,7 @@ function shell() {
     ${[['leads', 'Leads'], ['planos', 'Planos de Simulação'], ['config', 'Configurações']].map(([k, l]) => `<button class="tab ${aba === k ? 'on' : ''}" data-aba="${k}">${l}</button>`).join('')}
     <span class="sp"></span><button class="tab" id="sair">Sair</button></div><div id="conteudo"></div>`;
   $.querySelectorAll('[data-aba]').forEach((b) => b.onclick = () => { aba = b.dataset.aba; shell(); });
-  document.getElementById('sair').onclick = () => { token = ''; sessionStorage.removeItem('adm_token'); login(); };
+  document.getElementById('sair').onclick = () => { token = ''; SS.del('adm_token'); login(); };
   ({ leads: viewLeads, planos: viewPlanos, config: viewConfig })[aba]();
 }
 
@@ -39,40 +40,124 @@ function shell() {
 const FILTROS = [['todos', 'Todos'], ['quentes', 'Quentes — quero fazer agora'], ['mornos', 'Mornos — quero conversar'], ['frios', 'Frios — ainda não']];
 const INTERESSE = { agora: 'Quero fazer agora', conversar: 'Quero conversar', depois: 'Ainda não' };
 const STATUS = { aguardando_pagamento: 'Aguardando pagamento', novo: 'Novo', contatado: 'Contatado', convertido: 'Convertido', perdido: 'Perdido' };
+const SITUACAO = { pago: 'Pago', informado: 'A conferir', pendente: 'Pendente', recusado: 'Não confirmado', cancelado: 'Cancelado' };
 const tel = (t) => { const d = String(t || '').replace(/\D/g, ''); return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : d; };
-const dt = (s) => s ? new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+const dt = (s) => s ? new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }) : '—';
+const badgePag = (st) => `<span class="badge ${st === 'pago' ? 'pago' : st === 'informado' ? 'conversar' : ''}">${esc(SITUACAO[st] || st || '—')}</span>`;
+const F = { filtro: 'todos', q: '', de: '', ate: '', pagamento: '' }; // filtros atuais do painel
+
+const qs = () => new URLSearchParams(Object.entries(F).filter(([, v]) => v && v !== 'todos')).toString();
+function abrirBlob(blob, nome, abrir) {
+  const url = URL.createObjectURL(blob);
+  if (abrir) { const w = window.open(url, '_blank'); if (w) return; }
+  const a = document.createElement('a'); a.href = url; a.download = nome; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+async function baixar(caminho, nome, tipo, abrir) {
+  const r = await fetch(caminho, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error('Não foi possível gerar o arquivo');
+  abrirBlob(new Blob([await r.arrayBuffer()], { type: tipo }), nome, abrir);
+}
 
 async function viewLeads() {
   const c = document.getElementById('conteudo');
-  c.innerHTML = `<div class="tabs">${FILTROS.map(([k, l]) => `<button class="tab ${filtro === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div><p style="margin:0 0 10px"><button class="btn sm ghost" id="csv">Exportar CSV (cópia de segurança)</button></p><div class="tbl-wrap" id="tb">Carregando…</div>`;
-  document.getElementById('csv').onclick = async () => {
-    try {
-      const r = await fetch(`/api/admin/leads.csv?filtro=${filtro}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) throw new Error('Não foi possível exportar');
-      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `leads-${filtro}.csv`; a.click(); URL.revokeObjectURL(a.href);
-    } catch (e) { alert(e.message); }
-  };
-  c.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => { filtro = b.dataset.f; viewLeads(); });
-  const { leads } = await api(`/api/admin/leads?filtro=${filtro}`);
-  const tb = document.getElementById('tb');
-  if (!leads.length) { tb.innerHTML = '<p class="loading">Nenhum lead neste filtro.</p>'; return; }
-  tb.innerHTML = `<table><thead><tr><th>Nome</th><th>Telefone / WhatsApp</th><th>E-mail</th><th>Tipo</th><th>Crédito desejado</th><th>Capacidade mensal</th><th>Parcela escolhida</th><th>Resultado</th><th>Interesse</th><th>Data</th><th>Pagamento</th><th>Status</th></tr></thead><tbody>
-  ${leads.map((l) => `<tr class="lead" data-id="${l.id}"><td><b>${esc(l.nome)}</b></td>
-    <td><a href="https://wa.me/55${esc(l.telefone)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(tel(l.telefone))}</a></td>
-    <td>${esc(l.email)}</td><td>${esc(l.tipo || '—')}</td><td>${l.credito ? brl(l.credito) : '—'}</td><td>${esc(l.capacidade_label || '—')}</td>
-    <td>${esc(l.parcela_escolhida || '—')}</td><td>${esc(l.resultado || '—')}</td>
-    <td>${l.interesse ? `<span class="badge ${l.interesse}">${INTERESSE[l.interesse]}</span>` : '—'}</td><td>${dt(l.simulado_em || l.criado_em)}</td>
-    <td>${l.pagamento_status === 'informado' ? '<span class="badge conversar">conferir</span>' : `<span class="badge ${l.pagamento_status === 'pago' ? 'pago' : ''}">${esc(l.pagamento_status || '—')}</span>`}</td><td onclick="event.stopPropagation()"><select data-st="${l.id}">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>
-    <tr class="det" id="d${l.id}" hidden><td colspan="12"><dl>
-      <div><dt>Telefone / WhatsApp</dt><dd>${esc(tel(l.telefone))}</dd></div><div><dt>CPF</dt><dd>${esc(l.cpf || '—')}</dd></div><div><dt>Nascimento</dt><dd>${esc(l.nascimento || '—')}</dd></div>
-      <div><dt>Nome da mãe</dt><dd>${esc(l.nome_mae || '—')}</dd></div><div><dt>Cidade/UF</dt><dd>${esc(l.cidade || '—')} / ${esc(l.estado || '—')}</dd></div>
-      <div><dt>Pagamento</dt><dd><span class="badge ${l.pagamento_status === 'pago' ? 'pago' : ''}">${esc(l.pagamento_status || '—')}</span> ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}${l.pagamento_status === 'informado' ? ` <button class="btn sm" data-pg="confirmar" data-lead="${l.id}">Confirmar recebimento</button> <button class="btn sm ghost" data-pg="recusar" data-lead="${l.id}">Não recebi</button>` : ''}</dd></div>
-      <div><dt>Pago em</dt><dd>${dt(l.pago_em)}</dd></div><div><dt>Cadastro</dt><dd>${dt(l.criado_em)}</dd></div></dl></td></tr>`).join('')}
-  </tbody></table>`;
-  tb.querySelectorAll('tr.lead').forEach((tr) => tr.onclick = () => { const d = document.getElementById(`d${tr.dataset.id}`); d.hidden = !d.hidden; });
-  tb.querySelectorAll('[data-pg]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); try { await api(`/api/admin/leads/${b.dataset.lead}/pagamento`, { method: 'POST', body: { acao: b.dataset.pg } }); viewLeads(); } catch (err) { alert(err.message); } });
-  tb.querySelectorAll('[data-st]').forEach((s) => s.onchange = () => api(`/api/admin/leads/${s.dataset.st}`, { method: 'PATCH', body: { status: s.value } }).catch((e) => alert(e.message)));
+  c.innerHTML = `<div id="alertas"></div>
+    <div class="tabs no-print">${FILTROS.map(([k, l]) => `<button class="tab ${F.filtro === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+    <div class="filtros no-print">
+      <div class="field"><label for="q">Buscar</label><input id="q" type="search" placeholder="Nome, telefone ou e-mail" value="${esc(F.q)}" autocomplete="off"></div>
+      <div class="field"><label for="de">Cadastro de</label><input id="de" type="date" value="${esc(F.de)}"></div>
+      <div class="field"><label for="ate">até</label><input id="ate" type="date" value="${esc(F.ate)}"></div>
+      <div class="field"><label for="pag">Pagamento</label><select id="pag"><option value="">Todos</option>${Object.entries(SITUACAO).map(([k, v]) => `<option value="${k}" ${F.pagamento === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+    </div>
+    <div class="acoes no-print"><button class="btn sm ghost" id="csv">Exportar CSV</button><button class="btn sm ghost" id="imprimir">Imprimir lista</button><button class="btn sm ghost" id="limpar">Limpar filtros</button><span id="contagem" class="muted"></span></div>
+    <div class="print-only"><h2>Relatório de leads</h2><p id="print-info"></p></div>
+    <div class="tbl-wrap" id="tb">Carregando…</div>`;
+  c.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => { F.filtro = b.dataset.f; viewLeads(); });
+  let t; const ao = (id, k) => document.getElementById(id).addEventListener('input', (e) => { F[k] = e.target.value; clearTimeout(t); t = setTimeout(carregarLeads, 300); });
+  ao('q', 'q'); ao('de', 'de'); ao('ate', 'ate'); ao('pag', 'pagamento');
+  document.getElementById('limpar').onclick = () => { Object.assign(F, { filtro: 'todos', q: '', de: '', ate: '', pagamento: '' }); viewLeads(); };
+  document.getElementById('csv').onclick = () => baixar(`/api/admin/leads.csv?${qs()}`, 'leads.csv', 'text/csv', false).catch((e) => alert(e.message));
+  document.getElementById('imprimir').onclick = () => window.print();
+  mostrarAlertas();
+  carregarLeads();
 }
+
+async function mostrarAlertas() {
+  try {
+    const st = await api('/api/admin/status'), el = document.getElementById('alertas'); if (!el) return;
+    const av = [];
+    if (!st.banco.persistente) av.push('<b>Atenção:</b> o banco de dados não está em disco persistente. Os leads serão perdidos no próximo deploy. Monte um disco em <code>/data</code> no Render.');
+    if (st.senhaFraca) av.push('A senha do painel tem menos de 10 caracteres. Troque a variável <code>ADMIN_PASSWORD</code> por uma mais forte.');
+    if (st.pagamento.confirmacao === 'manual' && st.aConferir) av.push(`<b>${st.aConferir} pagamento(s) a conferir.</b> Confira o recebimento no extrato do banco e confirme no cadastro do lead. O cliente só é liberado depois da confirmação.`);
+    el.innerHTML = av.map((m) => `<div class="alerta">${m}</div>`).join('');
+  } catch { /* alertas são opcionais */ }
+}
+
+async function carregarLeads() {
+  const tb = document.getElementById('tb'); if (!tb) return;
+  let r;
+  try { r = await api(`/api/admin/leads?${qs()}`); } catch (e) { tb.innerHTML = `<p class="loading">${esc(e.message)}</p>`; return; }
+  const { leads, total } = r;
+  document.getElementById('contagem').textContent = total > leads.length ? `Mostrando ${leads.length} de ${total} leads (refine os filtros)` : `${total} lead(s)`;
+  document.getElementById('print-info').textContent = `Emitido em ${dt(new Date().toISOString())} · ${total} lead(s)${F.q ? ` · busca: ${F.q}` : ''}${F.pagamento ? ` · pagamento: ${SITUACAO[F.pagamento]}` : ''}${F.de ? ` · de ${F.de}` : ''}${F.ate ? ` · até ${F.ate}` : ''}`;
+  if (!leads.length) { tb.innerHTML = '<p class="loading">Nenhum lead encontrado.</p>'; return; }
+  tb.innerHTML = `<table><thead><tr><th>Nome</th><th>Telefone / WhatsApp</th><th>E-mail</th><th class="np">Tipo</th><th>Renda mensal</th><th>Crédito desejado</th><th class="np">Capacidade mensal</th><th class="np">Parcela escolhida</th><th class="np">Resultado</th><th class="np">Interesse</th><th>Data</th><th>Pagamento</th><th class="np">Status</th></tr></thead><tbody>
+  ${leads.map((l) => `<tr class="lead" data-id="${l.id}"><td><b>${esc(l.nome)}</b></td>
+    <td><a href="https://wa.me/55${esc(l.telefone)}" target="_blank" rel="noopener">${esc(tel(l.telefone))}</a></td>
+    <td>${esc(l.email)}</td><td class="np">${esc(l.tipo || '—')}</td><td>${l.renda_mensal ? brl(l.renda_mensal) : '—'}</td><td>${l.credito ? brl(l.credito) : '—'}</td><td class="np">${esc(l.capacidade_label || '—')}</td>
+    <td class="np">${esc(l.parcela_escolhida || '—')}</td><td class="np">${esc(l.resultado || '—')}</td>
+    <td class="np">${l.interesse ? `<span class="badge ${l.interesse}">${INTERESSE[l.interesse]}</span>` : '—'}</td><td>${dt(l.simulado_em || l.criado_em)}</td>
+    <td>${badgePag(l.pagamento_status)}</td><td class="np"><select data-st="${l.id}" aria-label="Status do lead">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>
+    <tr class="det" id="d${l.id}" hidden><td colspan="13">Carregando…</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+function detalheHtml(r) {
+  const l = r.lead, sim = r.simulacao;
+  const pagBtns = l.pagamento_status === 'informado'
+    ? ` <button class="btn sm" data-pg="confirmar" data-lead="${l.id}">Confirmar recebimento</button> <button class="btn sm ghost" data-pg="recusar" data-lead="${l.id}">Não recebi</button>`
+    : l.pagamento_status === 'pendente' || l.pagamento_status === 'recusado' ? ` <button class="btn sm ghost" data-pg="confirmar" data-lead="${l.id}">Marcar como pago</button>` : '';
+  return `<dl>
+    <div><dt>Telefone / WhatsApp</dt><dd>${esc(tel(l.telefone))}</dd></div><div><dt>E-mail</dt><dd>${esc(l.email)}</dd></div>
+    <div><dt>Renda mensal</dt><dd>${l.renda_mensal ? brl(l.renda_mensal) : '—'}</dd></div><div><dt>Crédito desejado</dt><dd>${l.credito ? brl(l.credito) : '—'}</dd></div>
+    <div><dt>Capacidade mensal informada</dt><dd>${esc(l.capacidade_label || '—')}</dd></div>
+    <div><dt>Plano / prazo</dt><dd>${sim ? `${esc(sim.plano)} · ${sim.prazo} meses` : '—'}</dd></div>
+    <div><dt>Parcela integral</dt><dd>${sim?.parcelaIntegral != null ? brl(sim.parcelaIntegral) : '—'}</dd></div><div><dt>Parcela reduzida</dt><dd>${sim?.parcelaReduzida != null ? brl(sim.parcelaReduzida) : '—'}</dd></div>
+    <div><dt>CPF</dt><dd>${esc(l.cpf || '—')}</dd></div><div><dt>Nascimento</dt><dd>${esc(l.nascimento || '—')}</dd></div>
+    <div><dt>Nome da mãe</dt><dd>${esc(l.nome_mae || '—')}</dd></div><div><dt>Cidade/UF</dt><dd>${esc(l.cidade || '—')} / ${esc(l.estado || '—')}</dd></div>
+    <div><dt>Pagamento</dt><dd>${badgePag(l.pagamento_status)} ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}${pagBtns}</dd></div>
+    <div><dt>Pago/confirmado em</dt><dd>${dt(l.pago_em)}</dd></div><div><dt>Cadastro</dt><dd>${dt(l.criado_em)}</dd></div><div><dt>Simulação</dt><dd>${dt(l.simulado_em)}</dd></div>
+  </dl><p class="no-print"><button class="btn sm" data-pdf="${l.id}">Gerar PDF / imprimir</button></p>`;
+}
+
+// Eventos da tabela (delegação; o CSP do site bloqueia atributos onclick inline)
+document.addEventListener('click', async (e) => {
+  const tb = e.target.closest('#tb'); if (!tb) return;
+  const btn = e.target.closest('button[data-pg], button[data-pdf]');
+  try {
+    if (btn?.dataset.pg) {
+      await api(`/api/admin/leads/${btn.dataset.lead}/pagamento`, { method: 'POST', body: { acao: btn.dataset.pg } });
+      return viewLeads();
+    }
+    if (btn?.dataset.pdf) {
+      const id = btn.dataset.pdf; btn.disabled = true;
+      try { await baixar(`/api/admin/leads/${id}.pdf`, `simulacao-${String(id).padStart(5, '0')}.pdf`, 'application/pdf', true); } finally { btn.disabled = false; }
+      return;
+    }
+  } catch (err) { return alert(err.message); }
+  if (e.target.closest('a, select, button')) return;
+  const tr = e.target.closest('tr.lead'); if (!tr) return;
+  const det = document.getElementById(`d${tr.dataset.id}`);
+  det.hidden = !det.hidden;
+  if (!det.hidden && !det.dataset.ok) {
+    try { det.firstElementChild.innerHTML = detalheHtml(await api(`/api/admin/leads/${tr.dataset.id}`)); det.dataset.ok = '1'; }
+    catch (err) { det.firstElementChild.textContent = err.message; }
+  }
+});
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest('#tb select[data-st]');
+  if (sel) api(`/api/admin/leads/${sel.dataset.st}`, { method: 'PATCH', body: { status: sel.value } }).catch((err) => alert(err.message));
+});
 
 // ---------- PLANOS ----------
 const NUM = (name, label, v, step = 'any') => `<div class="field"><label>${label}</label><input name="${name}" type="number" step="${step}" min="0" value="${esc(v)}"></div>`;
@@ -129,6 +214,7 @@ async function viewConfig() {
   c.innerHTML = `<form class="card" style="max-width:520px" id="f-cfg"><h3>Atendimento</h3>
     <div class="field" style="margin-top:10px"><label>WhatsApp do especialista (com DDD)</label><input name="whatsapp" value="${esc(cfg.whatsapp)}" placeholder="11999999999"></div>
     <div class="field"><label>Link do “Guia Consórcio Descomplicado” / página de conteúdo</label><input name="learn_url" value="${esc(cfg.learn_url)}" placeholder="https://..."></div>
+    <p class="note">Número em uso agora: <b>${esc(cfg.whatsapp_em_uso)}</b>${cfg.whatsapp_origem === 'padrao' ? ' (número padrão do sistema, nenhum foi salvo aqui; confirme se é o do especialista ou informe o correto acima)' : ''}.</p>
     <button class="btn sm">Salvar</button><p class="msg"></p></form>`;
   document.getElementById('f-cfg').onsubmit = async (e) => {
     e.preventDefault(); const m = e.target.querySelector('.msg');

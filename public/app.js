@@ -134,6 +134,7 @@ T.dados = () => {
         <div class="field" style="flex:2"><label for="cidade">Cidade</label><input id="cidade" name="cidade" autocomplete="address-level2" value="${esc(d.cidade)}"></div>
         <div class="field"><label for="uf">Estado</label><select id="uf" name="estado" autocomplete="address-level1">${optsUF(d.estado)}</select></div>
       </div>
+      <div class="field"><label for="renda">Qual é a sua renda mensal?</label><input id="renda" name="renda_mensal" data-mask="moeda" inputmode="numeric" placeholder="R$ 0" autocomplete="off" value="${esc(mask.moeda(d.renda_mensal))}"></div>
       <div class="field"><label for="cpf">CPF</label><input id="cpf" name="cpf" data-mask="cpf" inputmode="numeric" placeholder="000.000.000-00" value="${esc(mask.cpf(d.cpf))}"></div>
       <div class="field"><label for="nasc">Data de nascimento</label><input id="nasc" name="nascimento" type="date" autocomplete="bday" value="${esc(d.nascimento)}"></div>
       <div class="field"><label for="mae">Nome da mãe</label><input id="mae" name="nome_mae" value="${esc(d.nome_mae)}"></div>
@@ -297,7 +298,7 @@ const VALIDACOES = {
   cpf: (v) => { const c = digits(v); if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false; for (const n of [9, 10]) { let s = 0; for (let i = 0; i < n; i++) s += +c[i] * (n + 1 - i); if (((s * 10) % 11) % 10 !== +c[n]) return false; } return true; },
 };
 function enviarDados(form) {
-  const d = lerForm(form); d.telefone = digits(d.telefone); d.cpf = digits(d.cpf);
+  const d = lerForm(form); d.telefone = digits(d.telefone); d.cpf = digits(d.cpf); d.renda_mensal = Number(digits(d.renda_mensal));
   const erros = [];
   if (d.nome.trim().length < 3) erros.push('nome');
   if (!/^[1-9]{2}9?\d{8}$/.test(d.telefone)) erros.push('telefone');
@@ -306,6 +307,7 @@ function enviarDados(form) {
   if (!d.nascimento) erros.push('nascimento');
   if (d.nome_mae.trim().length < 3) erros.push('nome_mae');
   if (d.cidade.trim().length < 2) erros.push('cidade');
+  if (!(d.renda_mensal > 0)) erros.push('renda_mensal');
   if (!d.estado) erros.push('estado');
   sensivel = d;
   if (erros.length) { marcarErro(form, erros); return setMsg(form, 'Confira os campos destacados.'); }
@@ -323,9 +325,8 @@ async function montarPagamento() {
       <span class="pill">Valor: R$ 5,00</span>
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
       ${pix?.copiaECola && !pix.qrBase64 ? `<div class="qr" role="img" aria-label="QR Code Pix">${qrSvg(pix.copiaECola)}</div>` : ''}
-      ${pix?.recebedor ? `<p class="hint" style="margin:0 0 4px">Recebedor: <b>${esc(pix.recebedor)}</b><br>CNPJ ${esc(pix.cnpj)}</p>` : ''}
       ${pix?.copiaECola ? `<p style="font-size:.9rem;margin-top:6px">Pix copia e cola:</p><div class="copy">${esc(pix.copiaECola)}</div><button class="btn ghost" data-act="copiar">COPIAR CÓDIGO PIX</button>` : ''}
-      ${S.pix?.recebedor ? `<button class="btn" data-act="paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague R$ 5,00 e volte aqui.</p>` : ''}
+      ${S.pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague R$ 5,00 e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
@@ -337,7 +338,8 @@ async function montarPagamento() {
       const r = await api(`/api/lead/${S.lead.id}/estado`);
       if (r.pix) { S.pix = r.pix; if (!document.querySelector('.qr') && !document.getElementById('pay-box').querySelector('.copy')) pintar(); }
       if (r.liberado) return go('tipo');
-      if (r.pagamento !== 'pendente') { const s = document.getElementById('pay-status'); if (s) s.textContent = 'Pagamento não concluído. Reinicie a simulação.'; return; }
+      if (r.pagamento === 'informado') avisarConferencia();
+      if (r.pagamento !== 'pendente' && r.pagamento !== 'informado') { const s = document.getElementById('pay-status'); if (s) s.textContent = 'Pagamento não confirmado. Se você pagou, fale com o atendimento; ou reinicie a simulação.'; return; }
     } catch (e) { if (e.status === 404) { reset(); return go('home'); } }
     setTimeout(verificar, 3000);
   };
@@ -372,7 +374,12 @@ document.addEventListener('click', (e) => {
   S.wa = S.resultado.whatsappUrl; save();
 });
 A.retry = () => render();
-A.paguei = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); const r = await api(`/api/lead/${S.lead.id}/estado`); if (r.liberado) go('tipo'); else setMsg($app, 'Pagamento registrado. Assim que for confirmado, sua simulação é liberada.'); } catch (e) { setMsg($app, e.message); } }); };
+// "Já fiz o pagamento" só AVISA que o Pix foi feito: a simulação continua bloqueada até a confirmação real do recebimento.
+function avisarConferencia() {
+  const b = document.getElementById('btn-paguei'); if (b) { b.disabled = true; b.textContent = 'AGUARDANDO CONFIRMAÇÃO…'; }
+  const st = document.getElementById('pay-status'); if (st) st.textContent = 'Pagamento informado. Estamos conferindo o recebimento; mantenha esta página aberta, a liberação é automática.';
+}
+A.paguei = async () => { try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); avisarConferencia(); } catch (e) { setMsg($app, e.message); } };
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
 A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/mock-pay`, { method: 'POST' }); go('tipo'); } catch (e) { setMsg($app, e.message); } }); };
 

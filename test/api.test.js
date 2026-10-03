@@ -16,7 +16,7 @@ const call = async (path, { method = 'GET', body, headers = {} } = {}) => {
   return { status: r.status, data: await r.json().catch(() => ({})) };
 };
 
-const dados = { nome: 'João da Silva', telefone: '11999998888', email: 'joao@exemplo.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria da Silva', cidade: 'São Paulo', estado: 'SP', capacidade_label: 'R$500 a R$1.000', capacidade_valor: 1000 };
+const dados = { nome: 'João da Silva', telefone: '11999998888', email: 'joao@exemplo.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria da Silva', cidade: 'São Paulo', estado: 'SP', capacidade_label: 'R$500 a R$1.000', capacidade_valor: 1000, renda_mensal: 8500 };
 
 test('fluxo completo: pagamento → simulação → interesse → admin', async () => {
   const co = await call('/api/checkout', { method: 'POST', body: { nome: dados.nome, telefone: dados.telefone, email: dados.email } });
@@ -50,6 +50,9 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
 
   r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, cpf: '11111111111', tipo: 'imovel', credito: 100000 } });
   assert.equal(r.status, 400);
+  r = await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, renda_mensal: undefined, tipo: 'imovel', credito: 100000 } });
+  assert.equal(r.status, 400); // renda mensal é obrigatória
+  assert.match(r.data.erro, /renda/i);
 
   r = await call(`/api/lead/${co.data.leadId}/interesse`, { method: 'POST', headers: h, body: { interesse: 'agora' } });
   assert.equal(r.status, 200);
@@ -65,6 +68,7 @@ test('fluxo completo: pagamento → simulação → interesse → admin', async 
   assert.equal(wa.pathname, '/5511988887777');
   assert.match(wa.searchParams.get('text'), /\(11\) 99999-8888/);
   assert.match(wa.searchParams.get('text'), /Crédito escolhido: R\$\s?100\.000,00/);
+  assert.match(wa.searchParams.get('text'), /Renda mensal: R\$\s?8\.500,00/);
 
   const quentes = await call('/api/admin/leads?filtro=quentes', { headers: A });
   assert.equal(quentes.data.leads.length, 1);
@@ -89,7 +93,7 @@ test('faixas de imóvel: abaixo de R$500 mil paga 50%; a partir de R$500 mil, pl
   const co = await call('/api/checkout', { method: 'POST', body: { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com' } });
   const h = { 'X-Lead-Token': co.data.token };
   await call(`/api/lead/${co.data.leadId}/mock-pay`, { method: 'POST', headers: h });
-  const dados = { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 5000, tipo: 'imovel', parcela: 'reduzida' };
+  const dados = { nome: 'Ana Souza', telefone: '41987654321', email: 'ana@x.com', cpf: '52998224725', nascimento: '1988-03-10', nome_mae: 'Maria', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'x', capacidade_valor: 5000, renda_mensal: 12000, tipo: 'imovel', parcela: 'reduzida' };
   const sim = async (credito) => (await call(`/api/lead/${co.data.leadId}/simular`, { method: 'POST', headers: h, body: { ...dados, credito } })).data;
   assert.equal((await sim(250000)).parcelaReduzida, 843.25);       // 220 meses, 50%
   const r500 = await sim(500000);                                  // plano 55% diluído
@@ -123,6 +127,63 @@ test('exportação CSV exige login e neutraliza fórmulas', async () => {
   const bytes = new Uint8Array(await r.clone().arrayBuffer());
   assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]); // BOM para o Excel reconhecer UTF-8
   const txt = await r.text();
-  assert.ok(txt.startsWith('id;criado_em'));
+  assert.ok(txt.startsWith('ID;Cadastro;Data da simulação;Nome;WhatsApp;E-mail;Renda mensal'));
   assert.ok(txt.includes(`"'=CMD() Teste"`), txt.slice(0, 600));
+});
+
+test('painel: busca, período, situação do pagamento, detalhes, PDF e privacidade', async () => {
+  const { data } = await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } });
+  const A = { Authorization: `Bearer ${data.token}` };
+  const novo = async (nome, tel, email, pagar) => {
+    const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '192.0.2.77' }, body: { nome, telefone: tel, email } });
+    if (pagar) await call(`/api/lead/${co.data.leadId}/mock-pay`, { method: 'POST', headers: { 'X-Lead-Token': co.data.token } });
+    return co.data;
+  };
+  const ana = await novo('Ana Busca Teste', '41911112222', 'ana.busca@teste.com', true);
+  await novo('Bruno Busca Teste', '11933334444', 'bruno@outro.com', false);
+  const L = async (qs) => (await call(`/api/admin/leads?${qs}`, { headers: A })).data;
+
+  assert.equal((await L('q=ana busca')).leads.length, 1);                 // nome
+  assert.equal((await L('q=(11) 93333')).leads.length, 1);                // telefone com máscara
+  assert.equal((await L('q=OUTRO.com')).leads.length, 1);                 // e-mail, sem diferenciar maiúsculas
+  assert.equal((await L('q=%25')).leads.length, 0);                       // curinga do SQL é tratado como texto
+  assert.equal((await L('q=Busca Teste&pagamento=pago')).leads.length, 1);
+  assert.equal((await L('q=Busca Teste&pagamento=pendente')).leads.length, 1);
+  const hoje = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+  assert.ok((await L(`q=Busca Teste&de=${hoje}&ate=${hoje}`)).leads.length >= 2);
+  assert.equal((await L('q=Busca Teste&de=2999-01-01')).leads.length, 0);
+  const lista = await L('q=ana busca');
+  assert.equal(lista.leads[0].cpf, undefined);                            // lista não traz dados sensíveis
+  assert.equal(lista.leads[0].token, undefined);
+
+  const det = (await call(`/api/admin/leads/${ana.leadId}`, { headers: A })).data;
+  assert.equal(det.lead.token, undefined);
+  assert.equal(det.lead.pagamento_status, 'pago');
+  assert.equal((await call(`/api/admin/leads/${ana.leadId}`)).status, 401);
+
+  const pdf = await fetch(`${base}/api/admin/leads/${ana.leadId}.pdf`, { headers: A });
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  const buf = Buffer.from(await pdf.arrayBuffer());
+  assert.equal(buf.subarray(0, 5).toString(), '%PDF-');
+  assert.ok(buf.includes('Ana Busca Teste'));
+  assert.equal((await fetch(`${base}/api/admin/leads/${ana.leadId}.pdf`)).status, 401);
+
+  const st = (await call('/api/admin/status', { headers: A })).data;
+  assert.equal(st.pagamento.provedor, 'mock');
+  assert.equal((await call('/api/admin/status')).status, 401);
+});
+
+test('healthz não expõe informações', async () => {
+  const r = await fetch(base + '/healthz');
+  assert.equal(await r.text(), 'ok');
+  assert.equal(r.headers.get('x-powered-by'), null);
+});
+
+test('arquivos privados não são servidos', async () => {
+  for (const p of ['/.env', '/server.js', '/../package.json', '/data/simulador.db', '/lib/db.js', '/%2e%2e/package.json', '/%E0%A4%A']) {
+    const r = await fetch(base + p);
+    assert.ok([400, 404].includes(r.status), `${p} -> ${r.status}`);
+  }
+  assert.equal((await fetch(base + '/robots.txt')).status, 200);
 });
