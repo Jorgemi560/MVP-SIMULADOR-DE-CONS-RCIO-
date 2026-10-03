@@ -84,12 +84,14 @@ T.home = () => `
     <div class="hero">
       <div class="hero-in">
         <p class="eyebrow"><span>${ICONES.casa} Imóvel</span><i aria-hidden="true"></i><span>${ICONES.carro} Veículo</span></p>
-        <h1>QUANTO CUSTARIA REALIZAR SEU SONHO? <span class="h1-2">DESCUBRA POR APENAS <b class="gold">${PRECO_TXT}</b>!</span></h1>
-        <p class="lead">Faça uma simulação personalizada de consórcio de imóvel ou veículo e descubra uma estimativa de parcelas para o crédito que você deseja.</p>
+        <h1>DESCUBRA <em>QUANTO PODE FICAR</em> A SUA PARCELA DE CONSÓRCIO POR APENAS <b class="gold">${PRECO_TXT}</b>!</h1>
+        <p class="lead">Faça uma simulação personalizada para o crédito que você deseja e tenha uma estimativa das suas parcelas.</p>
         <div class="offer">
-          <p class="offer-label">SIMULAÇÃO PERSONALIZADA POR APENAS</p>
-          <p class="offer-price">${PRECO_TXT}</p>
-          <button class="btn cta" data-act="comecar"><span>QUERO MINHA SIMULAÇÃO POR ${PRECO_TXT}</span>${ICONES.seta}</button>
+          <div class="offer-price-row">
+            <p class="offer-price">${PRECO_TXT}</p>
+            <p class="offer-label">simulação personalizada<br>pagamento único por Pix</p>
+          </div>
+          <button class="btn cta" data-act="comecar"><span>FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}</span><i>${ICONES.seta}</i></button>
           <p class="offer-note"><span>${ICONES.relogio} Leva menos de 2 minutos</span><span>${ICONES.cadeado} Pagamento seguro por Pix</span></p>
         </div>
       </div>

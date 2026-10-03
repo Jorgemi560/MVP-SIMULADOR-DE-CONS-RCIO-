@@ -552,10 +552,16 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Não encontrado');
   }
-  res.writeHead(200, {
+  // no-cache + ETag: o navegador sempre confere se há versão nova (304 quando igual). Assim, depois de um deploy,
+  // ninguém continua vendo textos/preços antigos por causa de JS/CSS guardados em cache.
+  const st = fs.statSync(file);
+  const headers = {
     'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-    'Cache-Control': rel.endsWith('.html') ? 'no-cache' : 'public, max-age=3600',
-  });
+    'Cache-Control': 'no-cache',
+    ETag: `W/"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}"`,
+  };
+  if (req.headers['if-none-match'] === headers.ETag) { res.writeHead(304, headers); return res.end(); }
+  res.writeHead(200, headers);
   fs.createReadStream(file).pipe(res);
 }
 

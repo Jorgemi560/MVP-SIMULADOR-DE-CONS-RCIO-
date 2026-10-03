@@ -270,3 +270,28 @@ test('exclusão de lead (LGPD): exige login e confirmação, anonimiza dados pes
   assert.ok(!csv.includes('Pessoa Para Excluir') && !csv.includes('excluir@x.com') && !csv.includes('41944443333'));
   assert.equal((await call(`/api/admin/leads/${id}`, { method: 'DELETE', headers: A, body: { confirmar: 'EXCLUIR' } })).status, 404); // já excluído
 });
+
+test('arquivos do site são revalidados (ETag/304): um deploy novo aparece na hora, sem cache antigo', async () => {
+  const r = await fetch(base + '/app.js');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('cache-control'), 'no-cache');
+  const etag = r.headers.get('etag');
+  assert.ok(etag);
+  assert.equal((await fetch(base + '/app.js', { headers: { 'If-None-Match': etag } })).status, 304);
+  assert.equal((await fetch(base + '/style.css')).headers.get('cache-control'), 'no-cache');
+});
+
+test('preço: nenhum "R$ 5" sem centavos nos textos do site e a página inicial usa o valor do servidor', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const raiz = path.join(__dirname, '..');
+  const arquivos = [...fs.readdirSync(path.join(raiz, 'public')).filter((f) => /\.(js|html|css)$/.test(f)).map((f) => path.join('public', f)), 'README.md', 'DEPLOY.md', 'package.json', '.env.example', 'lib/pdf.js', 'lib/payment.js'];
+  for (const f of arquivos) {
+    const txt = fs.readFileSync(path.join(raiz, f), 'utf8');
+    assert.ok(!/R\$\s?5(?![\d,.])/.test(txt), `${f} ainda tem "R$ 5" sem ,00`);
+  }
+  const app = fs.readFileSync(path.join(raiz, 'public/app.js'), 'utf8');
+  assert.ok(app.includes('DESCUBRA <em>QUANTO PODE FICAR</em> A SUA PARCELA DE CONSÓRCIO POR APENAS <b class="gold">${PRECO_TXT}</b>!'));
+  assert.ok(app.includes('Faça uma simulação personalizada para o crédito que você deseja e tenha uma estimativa das suas parcelas.'));
+  assert.ok(app.includes('FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}'));
+  assert.ok(app.includes("let PRECO_TXT = 'R$ 5,00'"));
+});
