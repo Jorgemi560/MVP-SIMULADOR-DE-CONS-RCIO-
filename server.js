@@ -34,9 +34,20 @@ const brl = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const bad = (msg) => new HttpError(400, msg);
 
+// Atrás de um proxy/CDN (Render, Railway, Cloudflare…) todas as conexões chegam do IP do proxy.
+// TRUST_PROXY_HOPS=1 (nº de proxies confiáveis) usa o IP do cliente informado em X-Forwarded-For.
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS) || 0;
+function clientIp(req) {
+  if (TRUST_PROXY_HOPS > 0) {
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (xff.length) return xff[Math.max(0, xff.length - TRUST_PROXY_HOPS)];
+  }
+  return req.socket.remoteAddress || '?';
+}
+
 const hits = new Map();
 function limit(req, key, max, windowMs) {
-  const ip = req.socket.remoteAddress || '?';
+  const ip = clientIp(req);
   const k = `${key}:${ip}`, now = Date.now();
   const arr = (hits.get(k) || []).filter((t) => now - t < windowMs);
   if (arr.length >= max) throw new HttpError(429, 'Muitas tentativas. Aguarde um instante.');
@@ -283,17 +294,33 @@ route('POST', '/api/admin/login', async (req, { body }) => {
 });
 
 const FILTROS = { quentes: "interesse = 'agora'", mornos: "interesse = 'conversar'", frios: "interesse = 'depois'" };
-route('GET', '/api/admin/leads', async (req, { url }) => {
-  checkAdmin(req);
-  const where = FILTROS[url.searchParams.get('filtro')];
-  const rows = db.prepare(`
+function listarLeads(filtro) {
+  const where = FILTROS[filtro];
+  return db.prepare(`
     SELECT l.id, l.nome, l.telefone, l.email, l.tipo, l.credito, l.capacidade_label, l.parcela_escolhida, l.resultado, l.interesse,
            l.status, l.criado_em, l.simulado_em, l.cpf, l.nascimento, l.nome_mae, l.cidade, l.estado,
            p.valor_centavos, p.status AS pagamento_status, p.pago_em
     FROM leads l LEFT JOIN pagamentos p ON p.id = (SELECT MAX(id) FROM pagamentos WHERE lead_id = l.id)
     WHERE ${where ? where : "(l.simulado_em IS NOT NULL OR p.status IN ('pago','informado'))"}
-    ORDER BY l.id DESC LIMIT 1000`).all();
-  return { leads: rows };
+    ORDER BY l.id DESC LIMIT 5000`).all();
+}
+route('GET', '/api/admin/leads', async (req, { url }) => {
+  checkAdmin(req);
+  return { leads: listarLeads(url.searchParams.get('filtro')).slice(0, 1000) };
+});
+
+// Exportação (cópia de segurança dos leads) em CSV para Excel/Google Planilhas (separador ";").
+const CSV_COLS = ['id', 'criado_em', 'simulado_em', 'nome', 'telefone', 'email', 'cpf', 'nascimento', 'nome_mae', 'cidade', 'estado', 'tipo', 'credito',
+  'capacidade_label', 'parcela_escolhida', 'resultado', 'interesse', 'status', 'pagamento_status', 'valor_centavos', 'pago_em'];
+const csvCell = (v) => {
+  let t = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; // evita execução de fórmula ao abrir na planilha
+  return `"${t.replace(/"/g, '""')}"`;
+};
+route('GET', '/api/admin/leads.csv', async (req, { url }) => {
+  checkAdmin(req);
+  const linhas = listarLeads(url.searchParams.get('filtro')).map((l) => CSV_COLS.map((c) => csvCell(l[c])).join(';'));
+  return { __csv: `\ufeff${CSV_COLS.join(';')}\r\n${linhas.join('\r\n')}\r\n` };
 });
 
 route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) => {
@@ -392,8 +419,10 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'");
+  if ((process.env.PUBLIC_URL || '').startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   const url = new URL(req.url, 'http://localhost');
   try {
+    if (url.pathname === '/healthz') { db.prepare('SELECT 1').get(); res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if (!url.pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Método não permitido');
       return serveStatic(req, res, decodeURIComponent(url.pathname));
@@ -403,7 +432,12 @@ const server = http.createServer(async (req, res) => {
       const m = r.re.exec(url.pathname);
       if (!m) continue;
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
-      return send(res, 200, await r.handler(req, { body, url, params: m.groups || {} }));
+      const out = await r.handler(req, { body, url, params: m.groups || {} });
+      if (out && out.__csv !== undefined) {
+        res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="leads-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+        return res.end(out.__csv);
+      }
+      return send(res, 200, out);
     }
     throw new HttpError(404, 'Não encontrado');
   } catch (e) {

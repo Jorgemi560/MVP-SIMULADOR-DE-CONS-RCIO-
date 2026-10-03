@@ -44,7 +44,14 @@ const dt = (s) => s ? new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', 
 
 async function viewLeads() {
   const c = document.getElementById('conteudo');
-  c.innerHTML = `<div class="tabs">${FILTROS.map(([k, l]) => `<button class="tab ${filtro === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div><div class="tbl-wrap" id="tb">Carregando…</div>`;
+  c.innerHTML = `<div class="tabs">${FILTROS.map(([k, l]) => `<button class="tab ${filtro === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div><p style="margin:0 0 10px"><button class="btn sm ghost" id="csv">Exportar CSV (cópia de segurança)</button></p><div class="tbl-wrap" id="tb">Carregando…</div>`;
+  document.getElementById('csv').onclick = async () => {
+    try {
+      const r = await fetch(`/api/admin/leads.csv?filtro=${filtro}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error('Não foi possível exportar');
+      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `leads-${filtro}.csv`; a.click(); URL.revokeObjectURL(a.href);
+    } catch (e) { alert(e.message); }
+  };
   c.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => { filtro = b.dataset.f; viewLeads(); });
   const { leads } = await api(`/api/admin/leads?filtro=${filtro}`);
   const tb = document.getElementById('tb');

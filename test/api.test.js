@@ -2,6 +2,7 @@
 process.env.DB_FILE = ':memory:';
 process.env.ADMIN_PASSWORD = 'segredo-teste';
 process.env.PAYMENT_PROVIDER = 'mock';
+process.env.TRUST_PROXY_HOPS = '1';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { server } = require('../server');
@@ -95,4 +96,33 @@ test('faixas de imóvel: abaixo de R$500 mil paga 50%; a partir de R$500 mil, pl
   assert.equal(r500.parcelaIntegral, 2822.5);
   assert.equal(r500.parcelaReduzida, 1799.77);
   assert.equal(r500.prazo, 220); // sempre 220 meses
+});
+
+test('healthz responde ok', async () => {
+  const r = await fetch(base + '/healthz');
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), 'ok');
+});
+
+test('limite de tentativas é por cliente (X-Forwarded-For), não pelo IP do proxy', async () => {
+  const tentar = (ip) => call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': ip }, body: {} });
+  let ultimo;
+  for (let i = 0; i < 12; i++) ultimo = await tentar('203.0.113.7');
+  assert.equal(ultimo.status, 429);
+  assert.equal((await tentar('203.0.113.8')).status, 400); // outro cliente não é afetado
+});
+
+test('exportação CSV exige login e neutraliza fórmulas', async () => {
+  assert.equal((await fetch(base + '/api/admin/leads.csv')).status, 401);
+  const { data } = await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } });
+  const co = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.1' }, body: { nome: '=CMD() Teste', telefone: '41987654321', email: 'csv@x.com' } });
+  await call(`/api/lead/${co.data.leadId}/mock-pay`, { method: 'POST', headers: { 'X-Lead-Token': co.data.token } });
+  const r = await fetch(base + '/api/admin/leads.csv', { headers: { Authorization: `Bearer ${data.token}` } });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /text\/csv/);
+  const bytes = new Uint8Array(await r.clone().arrayBuffer());
+  assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]); // BOM para o Excel reconhecer UTF-8
+  const txt = await r.text();
+  assert.ok(txt.startsWith('id;criado_em'));
+  assert.ok(txt.includes(`"'=CMD() Teste"`), txt.slice(0, 600));
 });
