@@ -16,6 +16,7 @@ Para publicar na internet, veja o [DEPLOY.md](DEPLOY.md).
 ## Banco de dados
 - **Produção:** PostgreSQL externo, definido em `DATABASE_URL` (Neon, Supabase, Render Postgres…). Sem `DATABASE_URL` o servidor **não inicia** em produção. As tabelas são criadas sozinhas na primeira inicialização. O servidor não guarda nada em disco, então deploys e reinícios do Render não apagam dados.
 - **Desenvolvimento/testes:** sem `DATABASE_URL`, usa o PGlite (PostgreSQL embutido). Os testes rodam nos dois (`npm test`; para testar num Postgres de verdade, defina `DATABASE_URL` e use um banco vazio).
+- **Ferramentas:** `npm run db:verificar` (testa a conexão e lista as tabelas, sem alterar nada), `npm run db:criar` (cria só o que falta, sem apagar) e `db/schema.sql` (a mesma estrutura em SQL, para colar no SQL Editor do Neon). Nunca mostram a senha.
 - **Dados antigos (SQLite do disco do Render):** `DATABASE_URL=... npm run migrar:sqlite -- /data/simulador.db`. Só roda se o PostgreSQL ainda não tiver leads e nunca altera o arquivo SQLite.
 
 ## Fluxo

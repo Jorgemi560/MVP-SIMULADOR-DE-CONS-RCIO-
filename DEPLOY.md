@@ -15,6 +15,21 @@ Escolha **um** provedor (todos têm plano gratuito ou barato; confira limites e 
 - **Supabase** (supabase.com): crie um projeto; em *Connect* copie a URI de conexão (use a do *pooler* se o Render reclamar de conexão) e troque `[YOUR-PASSWORD]` pela senha do projeto.
 - **Render Postgres**: *New → PostgreSQL*, na mesma conta e região do serviço; copie a **Internal Database URL** (o plano grátis do Render costuma expirar: confira antes de usar para dados reais).
 
+### Conferir a conexão e criar as tabelas
+O site cria as tabelas sozinho ao iniciar com a `DATABASE_URL` definida. Para **conferir antes** (ou se o banco estiver vazio), use as ferramentas do projeto. Elas **nunca mostram a senha** e **nunca apagam nem alteram dados**:
+
+| Comando | O que faz |
+|---|---|
+| `npm run db:verificar` | Testa a conexão e lista as 5 tabelas (`leads`, `pagamentos`, `planos`, `config`, `exclusoes`). Não altera nada. Sai com "Estrutura completa" ou diz o que falta. |
+| `npm run db:criar` | Cria só o que falta (as tabelas existentes e seus dados ficam como estão) e mostra o antes e o depois. |
+| `npm run db:schema` | Gera de novo o arquivo `db/schema.sql` (só para desenvolvedores). |
+
+**Onde rodar:** no Render, abra o serviço → **Shell** e digite o comando (a `DATABASE_URL` já está lá). Ou no seu computador, com o projeto baixado e `npm install` feito: `DATABASE_URL="postgresql://..." npm run db:verificar`.
+
+**Sem terminal?** Abra o arquivo `db/schema.sql`, copie tudo e cole em **Neon → SQL Editor → Run**. É seguro e pode ser executado mais de uma vez. O resultado é idêntico ao do site.
+
+**Erros comuns** (o comando explica em português): senha ou usuário errados (Neon: *Roles → Reset password* e atualize a URL), host errado, banco inexistente (o padrão do Neon é `neondb`), usuário sem permissão para criar tabelas (use o `neondb_owner`) e "tempo esgotado" (o Neon "dorme" quando fica parado; tente de novo em alguns segundos).
+
 Dicas: escolha a região mais próxima do seu serviço no Render; a senha vai dentro da URL (**não a envie a ninguém**; ela só vai nas variáveis do Render). As tabelas são criadas sozinhas na primeira inicialização, e os planos iniciais também.
 
 1. Crie conta em render.com e conecte o GitHub (autorize só esse repositório).
