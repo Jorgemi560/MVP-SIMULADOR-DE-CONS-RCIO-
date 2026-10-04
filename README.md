@@ -40,6 +40,9 @@ Havendo vários planos para o tipo/valor, usa-se o de menor parcela. **Os planos
 ## Pagamento
 - `PAYMENT_PROVIDER=pix` (padrão): Pix estático, com a conta definida em `PIX_CHAVE`, `PIX_RECEBEDOR` e `PIX_CIDADE`. QR Code e "copia e cola" de R$ 5,00. **O cliente não se libera sozinho**: o pagamento só vira "pago" quando o administrador confirma em `/admin` ou quando um serviço autorizado chama `POST /api/webhooks/pix` (`PIX_WEBHOOK_SECRET`). Veja o [DEPLOY.md](DEPLOY.md).
 - `PAYMENT_PROVIDER=mercadopago` + `MP_ACCESS_TOKEN` + `PUBLIC_URL`: Pix dinâmico com confirmação automática (polling + webhook). Ainda não testado contra a API real.
+
+### Validade do Pix e novo Pix
+Cada cobrança vale `PIX_VALIDADE_MINUTOS` (padrão 30). Vencida e sem pagamento, a tentativa vira **expirado**: a tela mostra o aviso, o botão **GERAR NOVO PIX** cria uma nova cobrança de R$ 5,00 (uma só por vez, mesmo com cliques/abas repetidos; máx. 10 por cadastro) e o cadastro e o histórico de tentativas ficam guardados (visíveis em `/admin`, detalhe do lead). Ao reabrir o site, o servidor informa a situação real: aguardando, expirado, em conferência ou pago. Só `pago` libera a simulação; um pagamento confirmado nunca é alterado. Observação: o Pix **estático** não expira no banco (a validade é do sistema); se alguém pagar depois de vencido, o administrador ainda pode confirmar a tentativa correta em `/admin`. No Mercado Pago a validade também é enviada ao provedor.
 - `PAYMENT_PROVIDER=mock`: só desenvolvimento; bloqueado com `NODE_ENV=production`.
 
 ## Notas

@@ -38,8 +38,16 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     valor_centavos INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pendente',
     criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
-    pago_em TIMESTAMPTZ
+    pago_em TIMESTAMPTZ,
+    expira_em TIMESTAMPTZ,
+    pix_codigo TEXT
   );
+
+ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS expira_em TIMESTAMPTZ;
+
+ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS pix_codigo TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pag_pendente_por_lead ON pagamentos(lead_id) WHERE status = 'pendente';
 
 CREATE TABLE IF NOT EXISTS exclusoes (
     id SERIAL PRIMARY KEY,

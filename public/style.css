@@ -135,3 +135,10 @@ body.is-home main{max-width:none;padding:0}
 .offer-text{color:#fff;font-size:clamp(1.25rem,5.6vw,1.7rem);line-height:1.35;font-weight:800;margin:2px 0 16px;text-wrap:balance}
 .offer-text .gold{font-size:1.15em;margin-top:0;vertical-align:baseline}
 @media (min-width:760px){.hero h1{font-size:3.2rem}}
+
+/* Pix expirado / contagem regressiva */
+.timer{margin:10px 0 0;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums}
+.timer.urgente{color:var(--red)}
+.aviso-exp{background:#fff6e5;border:2px solid var(--gold);border-radius:var(--r);padding:16px;margin-bottom:14px;text-align:left}
+.aviso-exp b{color:var(--navy);font-size:1.1rem}.aviso-exp p{margin:6px 0 0;color:var(--ink)}
+.linklike{display:block;margin:14px auto 0;background:none;border:0;color:var(--blue);font:inherit;font-size:.9rem;text-decoration:underline;cursor:pointer}

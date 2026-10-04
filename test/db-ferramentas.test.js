@@ -48,7 +48,9 @@ test('diagnóstico em português para os erros mais comuns', () => {
 test('db/schema.sql está em dia com lib/esquema.js e é seguro (só cria o que não existe)', () => {
   const arquivo = fs.readFileSync(ARQUIVO, 'utf8');
   assert.equal(arquivo, gerarSql(), 'db/schema.sql está desatualizado: rode "npm run db:schema"');
-  assert.ok(!/\b(DROP|TRUNCATE|DELETE\s+FROM|ALTER\s+TABLE)\b/i.test(arquivo), 'o SQL não pode conter comandos destrutivos');
+  assert.ok(!/\b(DROP|TRUNCATE|DELETE\s+FROM)\b/i.test(arquivo), 'o SQL não pode conter comandos destrutivos');
+  // ALTER TABLE só é aceito para ADICIONAR coluna que ainda não existe (nunca altera/remove dados)
+  for (const alt of arquivo.match(/ALTER\s+TABLE[^;]*;/gi) || []) assert.match(alt, /ADD COLUMN IF NOT EXISTS/i, `ALTER não permitido: ${alt}`);
   assert.ok(!/CREATE (TABLE|INDEX) (?!IF NOT EXISTS)/.test(arquivo), 'todo CREATE precisa de IF NOT EXISTS');
 });
 

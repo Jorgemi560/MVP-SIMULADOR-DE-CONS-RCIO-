@@ -49,3 +49,5 @@ tr.lead{cursor:pointer}tr.lead:hover{background:#f7faff}
 .excluir-box p{margin:0 0 10px}
 .alerta.info{background:#e8f1ff;border-color:#9bbcf0;color:#0b2447}
 .alerta.erro{background:#fdecea;border-color:#e08a82;color:#7a1710}
+
+.hist{margin:12px 0}.hist table{width:100%;margin-top:6px;font-size:.88rem}

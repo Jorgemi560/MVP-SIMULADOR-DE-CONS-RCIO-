@@ -343,33 +343,81 @@ function enviarDados(form) {
 }
 
 // ---- telas com lógica própria ----
+// Tela de pagamento: tudo vem do servidor (situação real da tentativa atual); nada do que ficou salvo no aparelho
+// é mostrado como se ainda valesse. Estados: pendente (contagem regressiva), informado (em conferência),
+// expirado/recusado/cancelado (gerar novo Pix) e pago (libera a simulação).
+let payLoop = 0;
 async function montarPagamento() {
   const box = document.getElementById('pay-box');
+  const eu = ++payLoop;
+  const vivo = () => eu === payLoop && S.tela === 'pagamento' && document.body.contains(box);
   const qrSvg = (txt) => { try { const q = qrcode(0, 'M'); q.addData(txt); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch { return ''; } };
-  const pintar = () => {
+  let offset = 0, expiraMs = null, chave = '', consultando = false, proximo = null;
+  box.innerHTML = '<p class="loading">Verificando seu pagamento…</p>';
+
+  const pintar = (r) => {
+    if (r.podeRenovar) {
+      const motivo = r.pagamento === 'expirado' ? 'O tempo para pagar este Pix terminou.' : 'Este pagamento não foi confirmado.';
+      box.innerHTML = `
+        <div class="aviso-exp" role="alert"><b>${r.pagamento === 'expirado' ? 'Pix expirado' : 'Pagamento não confirmado'}</b><p>${motivo} Nenhum valor é cobrado por um Pix vencido. Gere um novo código para continuar.</p></div>
+        <button class="btn" data-act="novopix" id="btn-novopix">GERAR NOVO PIX</button>
+        <button class="btn ghost" data-act="home" style="margin-top:10px">Voltar ao início</button>
+        <button class="linklike" data-act="novocadastro">Usar outros dados de contato</button>
+        <p class="msg" role="alert"></p>
+        <p class="hint">Já pagou este código? Não pague de novo: aguarde a conferência ou fale com o atendimento. Seu cadastro e o histórico das tentativas ficam guardados.</p>`;
+      return;
+    }
     const pix = S.pix;
     box.innerHTML = `
       <span class="pill">Valor: ${PRECO_TXT}</span>
+      ${expiraMs ? '<p class="timer" id="pay-timer" aria-live="off"></p>' : ''}
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
       ${pix?.copiaECola && !pix.qrBase64 ? `<div class="qr" role="img" aria-label="QR Code Pix">${qrSvg(pix.copiaECola)}</div>` : ''}
       ${pix?.copiaECola ? `<p style="font-size:.9rem;margin-top:6px">Pix copia e cola:</p><div class="copy">${esc(pix.copiaECola)}</div><button class="btn ghost" data-act="copiar">COPIAR CÓDIGO PIX</button>` : ''}
-      ${S.pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague ${PRECO_TXT} e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
+      ${pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague ${PRECO_TXT} e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
+    if (r.pagamento === 'informado') avisarConferencia();
   };
-  pintar();
+
+  const aplicar = (r) => {
+    offset = r.agora ? Date.parse(r.agora) - Date.now() : 0; // relógio do servidor manda (o do celular pode estar errado)
+    expiraMs = r.expiraEm ? Date.parse(r.expiraEm) : null;
+    S.mock = !!r.mock;
+    if (r.pix) S.pix = S.pix?.copiaECola === r.pix.copiaECola ? S.pix : r.pix;
+    else if (r.podeRenovar || r.pagamento === 'pendente') { if (!S.mock) S.pix = null; } // código vencido nunca fica na tela
+    save();
+    const nova = `${r.pagamento}|${r.pix?.copiaECola || ''}`;
+    if (nova !== chave) { chave = nova; pintar(r); }
+  };
+
   const verificar = async () => {
-    if (S.tela !== 'pagamento') return;
-    try {
-      const r = await api(`/api/lead/${S.lead.id}/estado`);
-      if (r.pix) { S.pix = r.pix; if (!document.querySelector('.qr') && !document.getElementById('pay-box').querySelector('.copy')) pintar(); }
-      if (r.liberado) return go('tipo');
-      if (r.pagamento === 'informado') avisarConferencia();
-      if (r.pagamento !== 'pendente' && r.pagamento !== 'informado') { const s = document.getElementById('pay-status'); if (s) s.textContent = 'Pagamento não confirmado. Se você pagou, fale com o atendimento; ou reinicie a simulação.'; return; }
-    } catch (e) { if (e.status === 404) { reset(); return go('home'); } }
-    setTimeout(verificar, 3000);
+    clearTimeout(proximo);
+    if (!vivo() || consultando) return;
+    consultando = true;
+    let r;
+    try { r = await api(`/api/lead/${S.lead.id}/estado`); }
+    catch (e) { consultando = false; if (e.status === 404) { reset(); return go('home'); } if (vivo()) proximo = setTimeout(verificar, 3000); return; }
+    consultando = false;
+    if (!vivo()) return;
+    if (r.liberado) return go('tipo');
+    aplicar(r);
+    if (!r.podeRenovar) proximo = setTimeout(verificar, 3000); // expirado/recusado: para de consultar até gerar novo Pix
   };
+
+  // Contagem regressiva (usa o relógio do servidor). Ao zerar, o servidor confirma o vencimento.
+  const contar = () => {
+    if (!vivo()) return;
+    const el = document.getElementById('pay-timer');
+    if (expiraMs && el) {
+      const falta = Math.max(0, expiraMs - (Date.now() + offset));
+      if (falta === 0) { el.textContent = 'Verificando a validade do Pix…'; verificar(); }
+      else { const m = Math.floor(falta / 60000), sec = Math.floor((falta % 60000) / 1000); el.textContent = `Este Pix expira em ${m}:${String(sec).padStart(2, '0')}`; el.classList.toggle('urgente', falta < 60000); }
+    }
+    setTimeout(contar, 1000);
+  };
+  contar();
   verificar();
 }
 
@@ -408,6 +456,18 @@ function avisarConferencia() {
 }
 A.paguei = async () => { try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); avisarConferencia(); } catch (e) { setMsg($app, e.message); } };
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
+// Gera uma nova cobrança (o servidor só cria se não houver outra em aberto: cliques repetidos não duplicam).
+A.novopix = async (el) => {
+  await busy(el, async () => {
+    try {
+      const r = await api(`/api/lead/${S.lead.id}/novo-pix`, { method: 'POST' });
+      S.pix = r.pix; if (r.mock !== undefined) S.mock = r.mock; save();
+      render();
+    } catch (e) { setMsg($app, e.message); }
+  });
+};
+// Cadastro novo com outros dados de contato: o anterior e o histórico de pagamentos continuam guardados.
+A.novocadastro = () => { S.lead = null; S.pix = null; S.mock = false; go('checkout'); };
 A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/mock-pay`, { method: 'POST' }); go('tipo'); } catch (e) { setMsg($app, e.message); } }); };
 
 // ---- render ----

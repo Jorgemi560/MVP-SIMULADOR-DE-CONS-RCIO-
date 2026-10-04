@@ -40,7 +40,7 @@ function shell() {
 const FILTROS = [['todos', 'Todos'], ['quentes', 'Quentes — quero fazer agora'], ['mornos', 'Mornos — quero conversar'], ['frios', 'Frios — ainda não']];
 const INTERESSE = { agora: 'Quero fazer agora', conversar: 'Quero conversar', depois: 'Ainda não' };
 const STATUS = { aguardando_pagamento: 'Aguardando pagamento', novo: 'Novo', contatado: 'Contatado', convertido: 'Convertido', perdido: 'Perdido' };
-const SITUACAO = { pago: 'Pago', informado: 'A conferir', pendente: 'Pendente', recusado: 'Não confirmado', cancelado: 'Cancelado' };
+const SITUACAO = { pago: 'Pago', informado: 'A conferir', pendente: 'Pendente', expirado: 'Pix expirado', recusado: 'Não confirmado', cancelado: 'Cancelado' };
 const tel = (t) => { const d = String(t || '').replace(/\D/g, ''); return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : d; };
 const dt = (s) => s ? new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }) : '—';
 const badgePag = (st) => `<span class="badge ${st === 'pago' ? 'pago' : st === 'informado' ? 'conversar' : ''}">${esc(SITUACAO[st] || st || '—')}</span>`;
@@ -118,7 +118,13 @@ function detalheHtml(r) {
   const l = r.lead, sim = r.simulacao;
   const pagBtns = l.pagamento_status === 'informado'
     ? ` <button class="btn sm" data-pg="confirmar" data-lead="${l.id}">Confirmar recebimento</button> <button class="btn sm ghost" data-pg="recusar" data-lead="${l.id}">Não recebi</button>`
-    : l.pagamento_status === 'pendente' || l.pagamento_status === 'recusado' ? ` <button class="btn sm ghost" data-pg="confirmar" data-lead="${l.id}">Marcar como pago</button>` : '';
+    : ['pendente', 'expirado', 'recusado'].includes(l.pagamento_status) ? ` <button class="btn sm ghost" data-pg="confirmar" data-lead="${l.id}">Marcar como pago</button>` : '';
+  const historico = (r.tentativas || []).length > 1 || (r.tentativas || []).some((t) => t.status === 'expirado') ? `
+  <div class="hist"><b>Tentativas de pagamento (${r.tentativas.length})</b>
+    <table><thead><tr><th>Nº</th><th>Criada em</th><th>Validade</th><th>Situação</th><th>Pago em</th><th class="no-print"></th></tr></thead><tbody>
+    ${r.tentativas.map((t, i) => `<tr><td>${r.tentativas.length - i}</td><td>${dt(t.criado_em)}</td><td>${t.expira_em ? dt(t.expira_em) : '—'}</td><td>${badgePag(t.status)}</td><td>${dt(t.pago_em)}</td>
+      <td class="no-print">${t.status === 'pago' ? '' : `<button class="btn sm ghost" data-pg="confirmar" data-pagto="${t.id}">Marcar como pago</button>`}</td></tr>`).join('')}
+    </tbody></table></div>` : '';
   return `<dl>
     <div><dt>Telefone / WhatsApp</dt><dd>${esc(tel(l.telefone))}</dd></div><div><dt>E-mail</dt><dd>${esc(l.email)}</dd></div>
     <div><dt>Renda mensal</dt><dd>${l.renda_mensal ? brl(l.renda_mensal) : '—'}</dd></div><div><dt>Crédito desejado</dt><dd>${l.credito ? brl(l.credito) : '—'}</dd></div>
@@ -129,7 +135,7 @@ function detalheHtml(r) {
     <div><dt>Nome da mãe</dt><dd>${esc(l.nome_mae || '—')}</dd></div><div><dt>Cidade/UF</dt><dd>${esc(l.cidade || '—')} / ${esc(l.estado || '—')}</dd></div>
     <div><dt>Pagamento</dt><dd>${badgePag(l.pagamento_status)} ${l.valor_centavos != null ? brl(l.valor_centavos / 100) : ''}${pagBtns}</dd></div>
     <div><dt>Pago/confirmado em</dt><dd>${dt(l.pago_em)}</dd></div><div><dt>Cadastro</dt><dd>${dt(l.criado_em)}</dd></div><div><dt>Simulação</dt><dd>${dt(l.simulado_em)}</dd></div>
-  </dl><p class="no-print"><button class="btn sm" data-pdf="${l.id}">Gerar PDF / imprimir</button> <button class="btn sm ghost" data-excluir="${l.id}">Excluir cadastro…</button></p>
+  </dl>${historico}<p class="no-print"><button class="btn sm" data-pdf="${l.id}">Gerar PDF / imprimir</button> <button class="btn sm ghost" data-excluir="${l.id}">Excluir cadastro…</button></p>
   <div class="excluir-box no-print" id="ex${l.id}" hidden>
     <p><b>Excluir os dados pessoais de ${esc(l.nome)}?</b> Esta ação é <b>definitiva e não pode ser desfeita</b>. Serão apagados nome, WhatsApp, e-mail, CPF, nascimento, nome da mãe, cidade, renda e a simulação. Fica apenas o registro financeiro do pagamento, sem identificação, e um registro de que a exclusão ocorreu.</p>
     <div class="form-grid">
@@ -147,7 +153,9 @@ document.addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-pg], button[data-pdf], button[data-excluir], button[data-excluir-ok], button[data-excluir-cancela]');
   try {
     if (btn?.dataset.pg) {
-      await api(`/api/admin/leads/${btn.dataset.lead}/pagamento`, { method: 'POST', body: { acao: btn.dataset.pg } });
+      const rota = btn.dataset.pagto ? `/api/admin/pagamentos/${btn.dataset.pagto}` : `/api/admin/leads/${btn.dataset.lead}/pagamento`;
+      if (btn.dataset.pagto && !confirm('Confirmar que este pagamento foi RECEBIDO na conta? Isso libera a simulação do cliente.')) return;
+      await api(rota, { method: 'POST', body: { acao: btn.dataset.pg } });
       return viewLeads();
     }
     if (btn?.dataset.excluir) { const bx = document.getElementById(`ex${btn.dataset.excluir}`); bx.hidden = false; bx.querySelector('input').focus(); return; }

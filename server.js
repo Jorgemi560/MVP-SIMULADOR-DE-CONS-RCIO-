@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { pronto: bancoPronto, todos, um, exec, tx, getConfig, setConfig, persistencia } = require('./lib/db');
-const { provider, codigoPix, contaPix } = require('./lib/payment');
+const { provider, codigoPix, contaPix, validadeMinutos } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
@@ -105,25 +105,73 @@ async function leadAutenticado(req, id) {
   if (!lead || lead.excluido_em || !safeEq(tok, lead.token)) throw new HttpError(404, 'Simulação não encontrada');
   return lead;
 }
-const ultimoPagamento = (leadId) => um('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [leadId]);
+// ---- Validade do Pix ----
+// Cada cobrança vale VALIDADE_MIN minutos (coluna expira_em). Vencida e sem pagamento, vira 'expirado': o cliente gera um
+// novo Pix (nova tentativa) e o histórico das anteriores é mantido. Cobranças antigas, criadas antes desta coluna
+// (expira_em nulo), contam a validade a partir de criado_em. Só 'pendente' vence: 'informado' e 'pago' nunca expiram.
+const VALIDADE_MIN = validadeMinutos();
+const MAX_TENTATIVAS = 10; // limite de cobranças por cliente (evita abuso/geração infinita)
+const VENCE_EM = (a) => `COALESCE(${a}.expira_em, ${a}.criado_em + interval '${VALIDADE_MIN} minutes')`;
+// Situação "efetiva" no SQL: 'pendente' vencida aparece como 'expirado' mesmo antes de ser gravada.
+const STATUS_EF = (a) => `CASE WHEN ${a}.status = 'pendente' AND ${VENCE_EM(a)} < now() THEN 'expirado' ELSE ${a}.status END`;
+// Qual tentativa vale para o cliente: a paga; senão a informada (aguardando conferência); senão a mais recente.
+const ORDEM_ATUAL = "ORDER BY (status = 'pago') DESC, (status = 'informado') DESC, id DESC LIMIT 1";
 
 async function marcarPago(pagamentoId) {
   const pg = await um('SELECT * FROM pagamentos WHERE id = ?', [pagamentoId]);
   if (!pg || pg.status === 'pago') return;
   await tx(async (t) => {
-    await t.exec("UPDATE pagamentos SET status='pago', pago_em=now() WHERE id=?", [pg.id]);
+    await t.exec("UPDATE pagamentos SET status='pago', pago_em=now() WHERE id=? AND status <> 'pago'", [pg.id]);
+    // Outra cobrança em aberto do mesmo cliente deixa de ser necessária (a confirmada nunca é alterada).
+    await t.exec("UPDATE pagamentos SET status='cancelado' WHERE lead_id=? AND id<>? AND status='pendente'", [pg.lead_id, pg.id]);
     await t.exec("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'", [pg.lead_id]);
   });
 }
 
+// Consulta o provedor (quando há API), confirma se pagou e grava a expiração. Devolve a tentativa atualizada.
+// Mesmo vencida, ainda perguntamos ao provedor: um pagamento feito no último segundo não pode ser perdido.
 async function sincronizarPagamento(pg) {
-  if (pg.status === 'pendente' && pg.provedor === provider.nome && pg.provedor_id && provider.nome !== 'mock') {
-    const novo = await provider.consultar(pg.provedor_id);
-    if (novo === 'pago') await marcarPago(pg.id);
-    else if (novo !== 'pendente') await exec('UPDATE pagamentos SET status=? WHERE id=?', [novo, pg.id]);
+  if (['pendente', 'expirado'].includes(pg.status) && pg.provedor === provider.nome && pg.provedor_id && !['mock', 'pix'].includes(provider.nome)) {
+    try {
+      const novo = await provider.consultar(pg.provedor_id);
+      if (novo === 'pago') await marcarPago(pg.id);
+      else if (novo !== 'pendente' && pg.status === 'pendente') await exec("UPDATE pagamentos SET status=? WHERE id=? AND status='pendente'", [novo, pg.id]);
+    } catch (e) { console.error('Falha ao consultar o provedor de pagamento:', e.message); } // segue com o que já sabemos
   }
-  return (await um('SELECT status FROM pagamentos WHERE id=?', [pg.id])).status;
+  await exec(`UPDATE pagamentos p SET status = 'expirado' WHERE p.id = ? AND p.status = 'pendente' AND ${VENCE_EM('p')} < now()`, [pg.id]);
+  return um('SELECT * FROM pagamentos WHERE id = ?', [pg.id]);
 }
+
+async function pagamentoAtual(leadId) {
+  const pg = await um(`SELECT * FROM pagamentos WHERE lead_id = ? ${ORDEM_ATUAL}`, [leadId]);
+  return pg ? sincronizarPagamento(pg) : null;
+}
+
+// Cria a cobrança no provedor para uma tentativa já registrada. Se falhar, a tentativa é cancelada
+// (libera nova tentativa) e o cliente recebe um erro claro.
+async function iniciarCobranca(pg, { email, nome }) {
+  try {
+    const r = await provider.criar({ pagamentoId: pg.id, valorCentavos: pg.valor_centavos, email, nome, expiraEm: pg.expira_em });
+    await exec('UPDATE pagamentos SET provedor_id=?, pix_codigo=? WHERE id=?', [r.provedorId, r.pix?.copiaECola ?? null, pg.id]);
+    return r;
+  } catch (e) {
+    console.error('Falha ao criar pagamento:', e.message);
+    await exec("UPDATE pagamentos SET status='cancelado' WHERE id=?", [pg.id]);
+    throw new HttpError(502, 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
+  }
+}
+
+// Código "copia e cola" de uma tentativa (o Pix estático é recalculado; o do provedor fica gravado).
+const codigoDe = (pg) => pg.pix_codigo || (provider.nome === 'pix' ? codigoPix(pg.id, pg.valor_centavos) : null);
+// Dados da tentativa para a tela do cliente. "agora" é o relógio do servidor (o do celular pode estar errado).
+const publicoPagamento = (pg) => ({
+  pagamento: pg.status, liberado: pagamentoLiberado(pg.status),
+  expiraEm: pg.status === 'pendente' && pg.expira_em ? new Date(pg.expira_em).toISOString() : null,
+  agora: new Date().toISOString(),
+  pix: ['pendente', 'informado'].includes(pg.status) && codigoDe(pg) ? { copiaECola: codigoDe(pg) } : null,
+  podeRenovar: ['expirado', 'recusado', 'cancelado'].includes(pg.status),
+  mock: provider.nome === 'mock',
+});
 
 // Número do especialista (destino do atendimento). Pode ser alterado em /admin → Configurações.
 const ESPECIALISTA_PADRAO = V.digits(process.env.WHATSAPP_ESPECIALISTA) || '5541997446032';
@@ -183,37 +231,60 @@ route('POST', '/api/checkout', async (req, { body }) => {
   if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
 
   const token = crypto.randomBytes(24).toString('hex');
-  const { leadId, pagId } = await tx(async (t) => {
+  const pg = await tx(async (t) => {
     const l = await t.um('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?) RETURNING id', [token, nome, email, telefone]);
-    const p = await t.um('INSERT INTO pagamentos (lead_id, provedor, valor_centavos) VALUES (?,?,?) RETURNING id', [l.id, provider.nome, PRICE_CENTS]);
-    return { leadId: l.id, pagId: p.id };
+    return t.um("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, expira_em) VALUES (?,?,?, now() + ?::int * interval '1 minute') RETURNING *", [l.id, provider.nome, PRICE_CENTS, VALIDADE_MIN]);
   });
-  try {
-    const r = await provider.criar({ pagamentoId: pagId, valorCentavos: PRICE_CENTS, email, nome });
-    await exec('UPDATE pagamentos SET provedor_id=? WHERE id=?', [r.provedorId, pagId]);
-    return { leadId, token, status: 'pendente', pix: r.pix, mock: provider.nome === 'mock' };
-  } catch (e) {
-    console.error('Falha ao criar pagamento:', e.message);
-    await exec("UPDATE pagamentos SET status='cancelado' WHERE id=?", [pagId]);
-    throw new HttpError(502, 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
-  }
+  const r = await iniciarCobranca(pg, { email, nome });
+  return { leadId: pg.lead_id, token, ...publicoPagamento({ ...pg, status: 'pendente' }), pix: r.pix };
 });
 
 route('GET', '/api/lead/:id/estado', async (req, { params }) => {
   const lead = await leadAutenticado(req, params.id);
-  const pg = await ultimoPagamento(lead.id);
-  const status = pg ? await sincronizarPagamento(pg) : 'pendente';
+  const pg = await pagamentoAtual(lead.id);
+  const n = (await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n;
   return {
-    pagamento: status, liberado: pagamentoLiberado(status),
-    pix: provider.nome === 'pix' && pg && status !== 'pago' ? { copiaECola: codigoPix(pg.id, pg.valor_centavos) } : null,
-    nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao,
+    ...(pg ? publicoPagamento(pg) : { pagamento: 'pendente', liberado: false, expiraEm: null, agora: new Date().toISOString(), pix: null, podeRenovar: true, mock: provider.nome === 'mock' }),
+    tentativas: n, nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao,
   };
+});
+
+// Gera um NOVO Pix quando o anterior venceu (ou foi recusado/cancelado). Nunca cria cobrança se já houver uma
+// aguardando pagamento, aguardando conferência ou paga: nesse caso devolve a que já existe (idempotente).
+route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
+  limit(req, 'novo-pix', 10, 600000);
+  const lead = await leadAutenticado(req, params.id);
+  if (!provider.pronto()) throw new HttpError(503, 'Pagamento temporariamente indisponível. Tente novamente em alguns minutos.');
+  const existente = async () => { const a = await pagamentoAtual(lead.id); return a && !['expirado', 'recusado', 'cancelado'].includes(a.status) ? a : null; };
+  const reaproveita = (a) => ({ ...publicoPagamento(a), novo: false });
+  let a = await existente();
+  if (a) return reaproveita(a);
+  if ((await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n >= MAX_TENTATIVAS) {
+    throw new HttpError(429, 'Muitas tentativas de pagamento neste cadastro. Fale com o nosso atendimento.');
+  }
+  let pg;
+  try {
+    pg = await tx(async (t) => {
+      await t.um('SELECT id FROM leads WHERE id = ? FOR UPDATE', [lead.id]); // serializa cliques/abas simultâneos do mesmo cliente
+      await t.exec(`UPDATE pagamentos p SET status = 'expirado' WHERE p.lead_id = ? AND p.status = 'pendente' AND ${VENCE_EM('p')} < now()`, [lead.id]);
+      const aberto = await t.um("SELECT id FROM pagamentos WHERE lead_id = ? AND status IN ('pendente','informado','pago')", [lead.id]);
+      if (aberto) return null;
+      return t.um("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, expira_em) VALUES (?,?,?, now() + ?::int * interval '1 minute') RETURNING *", [lead.id, provider.nome, PRICE_CENTS, VALIDADE_MIN]);
+    });
+  } catch (e) {
+    if (e.code !== '23505') throw e; // índice único: outra requisição criou a cobrança no mesmo instante
+  }
+  if (!pg) { a = await existente(); if (a) return reaproveita(a); throw new HttpError(409, 'Não foi possível gerar um novo Pix agora. Tente novamente.'); }
+  const r = await iniciarCobranca(pg, { email: lead.email, nome: lead.nome });
+  return { ...publicoPagamento({ ...pg, status: 'pendente' }), pix: r.pix, novo: true };
 });
 
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
   if (provider.nome !== 'mock') throw new HttpError(404, 'Não encontrado');
   const lead = await leadAutenticado(req, params.id);
-  const pg = await ultimoPagamento(lead.id);
+  const pg = await pagamentoAtual(lead.id);
+  if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
+  if (pg.status === 'expirado') throw new HttpError(409, 'Este Pix expirou. Gere um novo Pix.');
   await marcarPago(pg.id);
   return { pagamento: 'pago' };
 });
@@ -222,9 +293,11 @@ route('POST', '/api/lead/:id/informar-pagamento', async (req, { params }) => {
   if (provider.nome !== 'pix') throw new HttpError(404, 'Não encontrado');
   limit(req, 'informar', 10, 600000);
   const lead = await leadAutenticado(req, params.id);
-  const pg = await ultimoPagamento(lead.id);
+  const pg = await pagamentoAtual(lead.id);
+  if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
+  if (pg.status === 'expirado') throw new HttpError(409, 'Este Pix expirou. Gere um novo Pix para pagar.');
   if (pg.status === 'pendente') {
-    await exec("UPDATE pagamentos SET status='informado' WHERE id=?", [pg.id]);
+    await exec("UPDATE pagamentos SET status='informado' WHERE id=? AND status='pendente'", [pg.id]);
     await exec("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'", [lead.id]);
   }
   return { pagamento: (await um('SELECT status FROM pagamentos WHERE id=?', [pg.id])).status };
@@ -259,8 +332,8 @@ route('POST', '/api/webhooks/mercadopago', async (req, { body, url }) => {
 route('POST', '/api/lead/:id/simular', async (req, { body, params }) => {
   limit(req, 'simular', 30, 600000);
   const lead = await leadAutenticado(req, params.id);
-  const pg = await ultimoPagamento(lead.id);
-  if (!pg || !pagamentoLiberado(await sincronizarPagamento(pg))) throw new HttpError(402, 'Pagamento não confirmado.');
+  const pg = await pagamentoAtual(lead.id); // a tentativa paga (se houver) sempre vale
+  if (!pg || !pagamentoLiberado(pg.status)) throw new HttpError(402, 'Pagamento não confirmado.');
 
   const tipo = body.tipo, credito = Number(body.credito);
   if (!TIPOS.includes(tipo)) throw bad('Escolha o que pretende adquirir.');
@@ -336,17 +409,18 @@ route('POST', '/api/admin/login', async (req, { body }) => {
 });
 
 const FILTROS = { quentes: "l.interesse = 'agora'", mornos: "l.interesse = 'conversar'", frios: "l.interesse = 'depois'" };
-const SITUACOES = ['pago', 'informado', 'pendente', 'recusado', 'cancelado'];
-const LEAD_BASE = `FROM leads l LEFT JOIN pagamentos p ON p.id = (SELECT MAX(id) FROM pagamentos WHERE lead_id = l.id)`;
+const SITUACOES = ['pago', 'informado', 'pendente', 'expirado', 'recusado', 'cancelado'];
+const LEAD_BASE = `FROM leads l LEFT JOIN pagamentos p ON p.id = (SELECT id FROM pagamentos WHERE lead_id = l.id ${ORDEM_ATUAL})`;
 const LEAD_LISTA = `l.id, l.nome, l.telefone, l.email, l.tipo, l.credito, l.renda_mensal, l.capacidade_label, l.parcela_escolhida, l.resultado,
-  l.interesse, l.status, l.criado_em, l.simulado_em, p.valor_centavos, p.status AS pagamento_status, p.pago_em`;
+  l.interesse, l.status, l.criado_em, l.simulado_em, p.valor_centavos, ${STATUS_EF('p')} AS pagamento_status, p.pago_em,
+  (SELECT COUNT(*)::int FROM pagamentos WHERE lead_id = l.id) AS tentativas`;
 const escLike = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 // Filtros do painel: busca (nome/telefone/e-mail), período (datas no horário de Brasília), situação do pagamento e interesse.
 function filtrosLeads(sp) {
   const cond = ['l.excluido_em IS NULL'], args = [];
   if (FILTROS[sp.get('filtro')]) cond.push(FILTROS[sp.get('filtro')]);
-  if (SITUACOES.includes(sp.get('pagamento'))) { cond.push('p.status = ?'); args.push(sp.get('pagamento')); }
+  if (SITUACOES.includes(sp.get('pagamento'))) { cond.push(`${STATUS_EF('p')} = ?`); args.push(sp.get('pagamento')); }
   const de = sp.get('de'), ate = sp.get('ate');
   if (/^\d{4}-\d{2}-\d{2}$/.test(de || '')) { cond.push('l.criado_em >= ?'); args.push(`${de}T03:00:00.000Z`); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(ate || '')) {
@@ -394,14 +468,14 @@ route('GET', '/api/admin/leads.csv', async (req, { url }) => {
 });
 
 const SITUACAO_PAG = {
-  pago: ['Pago (confirmado)', 'ok'], informado: ['Aguardando conferência', 'aviso'], pendente: ['Aguardando pagamento', 'aviso'],
+  pago: ['Pago (confirmado)', 'ok'], informado: ['Aguardando conferência', 'aviso'], pendente: ['Aguardando pagamento', 'aviso'], expirado: ['Pix expirado', 'neutro'],
   recusado: ['Não confirmado', 'neutro'], cancelado: ['Cancelado', 'neutro'],
 };
 const INTERESSE_LABEL = { agora: 'Quer fazer agora (quente)', conversar: 'Quer conversar (morno)', depois: 'Ainda não (frio)' };
 const fmtData = (iso) => (iso ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)).replace(', ', ' ') : '');
 
 async function leadCompleto(id) {
-  const l = Number.isInteger(Number(id)) ? await um(`SELECT l.*, p.valor_centavos, p.status AS pagamento_status, p.pago_em ${LEAD_BASE} WHERE l.id = ?`, [Number(id)]) : null;
+  const l = Number.isInteger(Number(id)) ? await um(`SELECT l.*, p.valor_centavos, ${STATUS_EF('p')} AS pagamento_status, p.pago_em ${LEAD_BASE} WHERE l.id = ?`, [Number(id)]) : null;
   if (!l || l.excluido_em) throw new HttpError(404, 'Lead não encontrado');
   return l;
 }
@@ -430,7 +504,8 @@ route('GET', '/api/admin/leads/:id', async (req, { params }) => {
   const l = await leadCompleto(params.id);
   const sim = l.simulacao ? JSON.parse(l.simulacao) : null;
   const { token, simulacao, ...lead } = l; // nunca devolve o token do cliente
-  return { lead, simulacao: sim ? { plano: sim.plano, prazo: sim.prazo, parcelaIntegral: sim.parcelaIntegral, parcelaReduzida: sim.parcelaReduzida, indice: sim.indice } : null };
+  const tentativas = await todos(`SELECT p.id, p.provedor, p.valor_centavos, ${STATUS_EF('p')} AS status, p.criado_em, p.expira_em, p.pago_em FROM pagamentos p WHERE p.lead_id = ? ORDER BY p.id DESC`, [l.id]);
+  return { lead, tentativas, simulacao: sim ? { plano: sim.plano, prazo: sim.prazo, parcelaIntegral: sim.parcelaIntegral, parcelaReduzida: sim.parcelaReduzida, indice: sim.indice } : null };
 });
 
 route('GET', '/api/admin/status', async (req) => {
@@ -445,14 +520,32 @@ route('GET', '/api/admin/status', async (req) => {
   };
 });
 
+// Confirma ou recusa uma tentativa de pagamento. Um pagamento já confirmado ('pago') nunca é alterado.
+// Confirmar uma tentativa vencida é permitido: o Pix estático não expira no banco e o dinheiro pode ter entrado depois.
+async function decidirPagamento(pg, acao) {
+  if (acao !== 'confirmar' && acao !== 'recusar') throw bad('Ação inválida');
+  if (pg.status === 'pago') throw new HttpError(409, 'Pagamento já confirmado: não pode ser alterado.');
+  if (acao === 'confirmar') await marcarPago(pg.id);
+  else await exec("UPDATE pagamentos SET status='recusado' WHERE id=? AND status <> 'pago'", [pg.id]);
+}
+
+// Tentativa atual do cliente (a mesma exibida na lista).
 route('POST', '/api/admin/leads/:id/pagamento', async (req, { body, params }) => {
   checkAdmin(req);
   await leadCompleto(params.id); // 404 se o lead não existe ou já foi excluído
-  const pg = await ultimoPagamento(Number(params.id));
+  const pg = await pagamentoAtual(Number(params.id));
   if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
-  if (body.acao === 'confirmar') await marcarPago(pg.id);
-  else if (body.acao === 'recusar') await exec("UPDATE pagamentos SET status='recusado' WHERE id=?", [pg.id]);
-  else throw bad('Ação inválida');
+  await decidirPagamento(pg, body.acao);
+  return { ok: true };
+});
+
+// Uma tentativa específica (histórico do cliente).
+route('POST', '/api/admin/pagamentos/:id', async (req, { body, params }) => {
+  checkAdmin(req);
+  const pg = Number.isInteger(Number(params.id)) ? await um('SELECT * FROM pagamentos WHERE id = ?', [Number(params.id)]) : null;
+  if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
+  await leadCompleto(pg.lead_id);
+  await decidirPagamento(pg, body.acao);
   return { ok: true };
 });
 
