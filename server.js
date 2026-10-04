@@ -110,6 +110,10 @@ async function leadAutenticado(req, id) {
 // novo Pix (nova tentativa) e o histórico das anteriores é mantido. Cobranças antigas, criadas antes desta coluna
 // (expira_em nulo), contam a validade a partir de criado_em. Só 'pendente' vence: 'informado' e 'pago' nunca expiram.
 const VALIDADE_MIN = validadeMinutos();
+// Pix estático: o sistema não vê o banco, então um "já paguei" não pode ser descartado na hora. Enquanto a conferência é recente,
+// "Gerar novo Pix" é recusado (risco de cobrança dupla); passado este prazo o cliente deixa de ficar preso: a tentativa
+// antiga vira "expirado" (continua confirmável pelo txid) e uma nova é criada.
+const CONFERENCIA_MIN = (() => { const n = Number(process.env.PIX_CONFERENCIA_MINUTOS); return Number.isInteger(n) && n >= 1 && n <= 1440 ? n : 15; })();
 const MAX_TENTATIVAS = 10; // limite de cobranças por cliente (evita abuso/geração infinita)
 const VENCE_EM = (a) => `COALESCE(${a}.expira_em, ${a}.criado_em + interval '${VALIDADE_MIN} minutes')`;
 // Situação "efetiva" no SQL: 'pendente' vencida aparece como 'expirado' mesmo antes de ser gravada.
@@ -139,6 +143,8 @@ async function sincronizarPagamento(pg) {
     } catch (e) { console.error('Falha ao consultar o provedor de pagamento:', e.message); } // segue com o que já sabemos
   }
   await exec(`UPDATE pagamentos p SET status = 'expirado' WHERE p.id = ? AND p.status = 'pendente' AND ${VENCE_EM('p')} < now()`, [pg.id]);
+  // 'informado' gravado antes da coluna informado_em existir: conta a conferência a partir da criação (nunca fica sem prazo).
+  await exec("UPDATE pagamentos SET informado_em = criado_em WHERE id = ? AND status = 'informado' AND informado_em IS NULL", [pg.id]);
   return um('SELECT * FROM pagamentos WHERE id = ?', [pg.id]);
 }
 
@@ -227,11 +233,17 @@ route('GET', '/api/plano-info', async (req, { url }) => {
 // Garante UMA cobrança válida para o cliente. Se já há uma aguardando, em conferência ou paga, devolve essa mesma
 // (nunca cria outra); só gera nova quando a anterior venceu, foi recusada ou cancelada. Usada pelo "Gerar novo Pix"
 // e pelo retorno do mesmo cliente (mesmo e-mail e telefone).
-async function garantirCobranca(lead) {
+async function garantirCobranca(lead, { renovar = false } = {}) {
   const existente = async () => { const a = await pagamentoAtual(lead.id); return a && !['expirado', 'recusado', 'cancelado'].includes(a.status) ? a : null; };
   const reaproveita = (a) => ({ ...publicoPagamento(a), novo: false });
   let a = await existente();
-  if (a) return reaproveita(a);
+  if (a && !(renovar && a.status === 'informado')) return reaproveita(a);
+  if (a) { // "Gerar novo Pix" com um "já paguei" em conferência: só depois do prazo de segurança
+    const faltaMs = new Date(a.informado_em).getTime() + CONFERENCIA_MIN * 60000 - Date.now();
+    if (faltaMs > 0) {
+      throw new HttpError(409, `Seu pagamento informado ainda está em conferência e gerar outro Pix agora poderia gerar cobrança em duplicidade. Aguarde a conferência ou tente novamente em ${Math.ceil(faltaMs / 60000)} min.`);
+    }
+  }
   // Só gera outro Pix quando não há risco de o anterior ainda ser pago. No Mercado Pago o vencimento é do próprio provedor:
   // confirmamos com ele. No Pix estático o banco não vence o código; o risco é mitigado porque o pagamento tardio
   // continua reconhecível pelo txid (webhook/admin) e a tela avisa para não pagar duas vezes.
@@ -252,6 +264,7 @@ async function garantirCobranca(lead) {
     pg = await tx(async (t) => {
       await t.um('SELECT id FROM leads WHERE id = ? FOR UPDATE', [lead.id]); // serializa cliques/abas simultâneos do mesmo cliente
       await t.exec(`UPDATE pagamentos p SET status = 'expirado' WHERE p.lead_id = ? AND p.status = 'pendente' AND ${VENCE_EM('p')} < now()`, [lead.id]);
+      if (renovar) await t.exec(`UPDATE pagamentos SET status = 'expirado' WHERE lead_id = ? AND status = 'informado' AND informado_em <= now() - ?::int * interval '1 minute'`, [lead.id, CONFERENCIA_MIN]);
       const aberto = await t.um("SELECT id FROM pagamentos WHERE lead_id = ? AND status IN ('pendente','informado','pago')", [lead.id]);
       if (aberto) return null;
       return t.um("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, expira_em) VALUES (?,?,?, now() + ?::int * interval '1 minute') RETURNING *", [lead.id, provider.nome, PRICE_CENTS, VALIDADE_MIN]);
@@ -310,7 +323,7 @@ route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
   limit(req, 'novo-pix', 10, 600000);
   const lead = await leadAutenticado(req, params.id);
   if (!provider.pronto()) throw new HttpError(503, MSG_INDISPONIVEL);
-  return garantirCobranca(lead);
+  return garantirCobranca(lead, { renovar: true });
 });
 
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {

@@ -32,10 +32,14 @@ const reset = () => { try { localStorage.removeItem(KEY); } catch { /* ignora */
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (S.lead) headers['X-Lead-Token'] = S.lead.token;
-  let r;
-  try { r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
-  catch { throw new Error('Sem conexão. Verifique sua internet e tente novamente.'); }
-  const data = await r.json().catch(() => ({}));
+  let r, data;
+  // Nenhuma chamada fica esperando para sempre: passados 12 s ela é abortada (erro sem status = falha de rede/timeout).
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
+  try {
+    r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctl.signal });
+    data = await r.json().catch(() => ({}));
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'O servidor demorou a responder. Tente novamente.' : 'Sem conexão. Verifique sua internet e tente novamente.'); }
+  finally { clearTimeout(t); }
   if (!r.ok) { const e = new Error(data.erro || 'Algo deu errado.'); e.status = r.status; throw e; }
   return data;
 }
@@ -343,56 +347,61 @@ function enviarDados(form) {
 }
 
 // ---- telas com lógica própria ----
-// Tela de pagamento: tudo vem do servidor (situação real da tentativa atual); nada do que ficou salvo no aparelho
-// é mostrado como se ainda valesse. Estados: pendente (contagem regressiva), informado (em conferência),
-// expirado/recusado/cancelado (gerar novo Pix) e pago (libera a simulação).
-let payLoop = 0, payVerificarAgora = null;
-const VERIFICANDO_MS = 3 * 60 * 1000; // depois de 3 min em conferência, a tela passa a "ainda não identificado"
+// Tela de pagamento. Os estados vêm do servidor (situação real da tentativa), mas o PRAZO DE 3 MINUTOS da conferência é do
+// front-end: conta a partir do clique em "Já fiz o pagamento" (ou do horário gravado no servidor, ao recarregar) e a troca de
+// tela acontece por um relógio local, sem depender de resposta do servidor. Visões: pendente (contagem do Pix), verificando
+// (até 3 min), tardia (sem confirmação após 3 min), renovar (expirado/recusado/cancelado) e pago (libera a simulação).
+let payLoop = 0, payVerificarAgora = null, payRedesenhar = null;
+const VERIFICANDO_MS = 3 * 60 * 1000;
 const ICONE_RELOGIO = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 async function montarPagamento() {
   const box = document.getElementById('pay-box');
   const eu = ++payLoop;
   const vivo = () => eu === payLoop && S.tela === 'pagamento' && document.body.contains(box);
   const qrSvg = (txt) => { try { const q = qrcode(0, 'M'); q.addData(txt); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch { return ''; } };
-  let offset = 0, expiraMs = null, informadoMs = null, chave = '', consultando = false, proximo = null, ultimo = null;
-  const agoraSrv = () => Date.now() + offset;
-  const faseConferencia = () => (informadoMs && agoraSrv() - informadoMs >= VERIFICANDO_MS ? 'tardia' : 'verificando');
-  box.innerHTML = '<p class="loading">Verificando seu pagamento…</p>';
+  let offset = 0, expiraMs = null, chave = '', consultando = false, proximo = null, ultimo = null, semRede = false;
 
-  const pintar = (r) => {
-    if (r.pagamento === 'informado') {
-      // O clique em "Já fiz o pagamento" só abre a conferência: quem libera é a confirmação do servidor.
-      box.innerHTML = faseConferencia() === 'verificando' ? `
-        <div class="verify" role="status" aria-live="polite">
-          <div class="verify-ico"><span class="ring"></span>${ICONE_RELOGIO}</div>
-          <h3>Verificando seu pagamento</h3>
-          <p>Estamos consultando o sistema. Aguarde alguns instantes.</p>
-          <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
-          <p class="hint">Mantenha esta página aberta: a liberação é automática.</p>
-        </div>` : `
-        <div class="verify warn" role="status" aria-live="polite">
-          <div class="verify-ico still">${ICONE_RELOGIO}</div>
-          <h3>Pagamento ainda não identificado</h3>
-          <p>Ainda não identificamos seu pagamento. Se você já pagou, aguarde um pouco mais ou tente verificar novamente.</p>
-          <p class="nao-pagar">Se você já realizou o pagamento, <b>não faça outro Pix agora.</b></p>
-          <button class="btn" data-act="verificar" id="btn-verificar">VERIFICAR NOVAMENTE</button>
-          <p class="hint">Continuamos consultando automaticamente. Assim que o pagamento for confirmado, a simulação é liberada.</p>
-        </div>`;
-      return;
-    }
-    if (r.podeRenovar) {
-      const motivo = r.pagamento === 'expirado' ? 'O tempo para pagar este Pix terminou.' : 'Este pagamento não foi confirmado.';
-      box.innerHTML = `
-        <div class="aviso-exp" role="alert"><b>${r.pagamento === 'expirado' ? 'Pix expirado' : 'Pagamento não confirmado'}</b><p>${motivo} Nenhum valor é cobrado por um Pix vencido. Gere um novo código para continuar.</p></div>
-        <button class="btn" data-act="novopix" id="btn-novopix">GERAR NOVO PIX</button>
-        <button class="btn ghost" data-act="home" style="margin-top:10px">Voltar ao início</button>
-        <button class="linklike" data-act="novocadastro">Usar outros dados de contato</button>
-        <p class="msg" role="alert"></p>
-        <p class="hint">Já pagou este código? Não pague de novo: aguarde a conferência ou fale com o atendimento. Seu cadastro e o histórico das tentativas ficam guardados.</p>`;
-      return;
-    }
+  // Início da conferência em relógio LOCAL (S.conf é gravado ao clicar e acompanha recarregamentos).
+  const desde = () => (S.conf && S.lead && S.conf.lead === S.lead.id ? S.conf.desde : null);
+  const limparConf = () => { if (S.conf) { S.conf = null; save(); } };
+  const fase = () => (Date.now() - desde() >= VERIFICANDO_MS ? 'tardia' : 'verificando');
+  const visao = () => {
+    if (ultimo?.podeRenovar) return 'renovar';
+    if (desde() || ultimo?.pagamento === 'informado') return fase();
+    return ultimo ? 'pendente' : 'carregando';
+  };
+
+  const htmlConferencia = (f) => f === 'verificando' ? `
+    <div class="verify" role="status" aria-live="polite">
+      <div class="verify-ico"><span class="ring"></span>${ICONE_RELOGIO}</div>
+      <h3>Verificando seu pagamento</h3>
+      <p>Estamos consultando o sistema. Aguarde alguns instantes.</p>
+      <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <p class="hint">Mantenha esta página aberta: a liberação é automática.</p>
+    </div>` : `
+    <div class="verify warn" role="status" aria-live="polite">
+      <div class="verify-ico still">${ICONE_RELOGIO}</div>
+      <h3>Verificando seu pagamento</h3>
+      <p>Ainda não identificamos seu pagamento. Estamos consultando o sistema. Aguarde alguns instantes…</p>
+      <hr class="verify-sep">
+      <p class="nao-pagar">Se você já pagou, <b>não faça outro Pix agora.</b></p>
+      <button class="btn outline-green" data-act="verificar" id="btn-verificar">VERIFICAR NOVAMENTE</button>
+      <button class="btn outline-gray" data-act="novopix" id="btn-novopix">GERAR NOVO PIX</button>
+      <p class="msg" role="alert"></p>
+      <p class="hint">O novo Pix só deve ser disponibilizado quando for seguro gerar outra cobrança.</p>
+    </div>`;
+
+  const htmlRenovar = (r) => `
+    <div class="aviso-exp" role="alert"><b>${r.pagamento === 'expirado' ? 'Pix expirado' : 'Pagamento não confirmado'}</b><p>${r.pagamento === 'expirado' ? 'O tempo para pagar este Pix terminou.' : 'Este pagamento não foi confirmado.'} Nenhum valor é cobrado por um Pix vencido. Gere um novo código para continuar.</p></div>
+    <button class="btn" data-act="novopix" id="btn-novopix">GERAR NOVO PIX</button>
+    <button class="btn ghost" data-act="home" style="margin-top:10px">Voltar ao início</button>
+    <button class="linklike" data-act="novocadastro">Usar outros dados de contato</button>
+    <p class="msg" role="alert"></p>
+    <p class="hint">Já pagou este código? Não pague de novo: aguarde a conferência ou fale com o atendimento. Seu cadastro e o histórico das tentativas ficam guardados.</p>`;
+
+  const htmlPendente = () => {
     const pix = S.pix;
-    box.innerHTML = `
+    return `
       <span class="pill">Valor: ${PRECO_TXT}</span>
       ${expiraMs ? '<p class="timer" id="pay-timer" aria-live="off"></p>' : ''}
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
@@ -404,47 +413,78 @@ async function montarPagamento() {
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
   };
 
+  // Redesenha só quando a visão muda (sem piscar). Chamado a cada segundo pelo relógio local e a cada resposta.
+  const desenhar = () => {
+    const v = visao();
+    const k = `${v}|${ultimo?.pagamento || ''}|${ultimo?.pix?.copiaECola || ''}|${v === 'carregando' && semRede}`;
+    if (k === chave) return;
+    chave = k;
+    box.innerHTML = v === 'verificando' || v === 'tardia' ? htmlConferencia(v)
+      : v === 'renovar' ? htmlRenovar(ultimo)
+      : v === 'pendente' ? htmlPendente()
+      : `<p class="loading">${semRede ? 'Não conseguimos consultar o servidor agora. Tentando novamente…' : 'Verificando seu pagamento…'}</p>`;
+  };
+  payRedesenhar = () => { chave = ''; desenhar(); };
+
   const aplicar = (r) => {
-    offset = r.agora ? Date.parse(r.agora) - Date.now() : 0; // relógio do servidor manda (o do celular pode estar errado)
-    expiraMs = r.expiraEm ? Date.parse(r.expiraEm) : null;
-    informadoMs = r.informadoEm ? Date.parse(r.informadoEm) : null;
+    offset = r.agora ? Date.parse(r.agora) - Date.now() : 0; // relógio do servidor serve de referência (o do celular pode estar errado)
+    expiraMs = r.expiraEm ? Date.parse(r.expiraEm) - offset : null; // convertido para o relógio local
     ultimo = r;
     S.mock = !!r.mock;
+    if (r.pagamento === 'informado' && r.informadoEm) { // horário gravado no servidor vale ao recarregar/reabrir
+      // Já temos o instante do clique (relógio local)? Vale o mais antigo: a resposta nunca "reinicia" os 3 minutos.
+      const doServidor = Date.parse(r.informadoEm) - offset;
+      S.conf = { lead: S.lead.id, desde: desde() ? Math.min(desde(), doServidor) : doServidor };
+    } else if (r.podeRenovar || r.liberado) limparConf();
     if (r.pix) S.pix = S.pix?.copiaECola === r.pix.copiaECola ? S.pix : r.pix;
     else if (r.podeRenovar || r.pagamento === 'pendente') { if (!S.mock) S.pix = null; } // código vencido nunca fica na tela
     save();
-    const nova = `${r.pagamento}|${r.pix?.copiaECola || ''}|${r.pagamento === 'informado' ? faseConferencia() : ''}`;
-    if (nova !== chave) { chave = nova; pintar(r); }
+    desenhar();
   };
 
+  // Consulta o servidor. "consultando" nunca prende o ciclo: a chamada aborta em 12 s e o relógio local segue independente.
   const verificar = async () => {
     clearTimeout(proximo);
-    if (!vivo() || consultando) return;
+    if (!vivo()) return;
+    if (consultando) return;
     consultando = true;
     let r;
-    try { r = await api(`/api/lead/${S.lead.id}/estado`); }
-    catch (e) { consultando = false; if (e.status === 404) { reset(); return go('home'); } if (vivo()) proximo = setTimeout(verificar, 3000); return; }
+    try { r = await api(`/api/lead/${S.lead.id}/estado`); semRede = false; }
+    catch (e) {
+      consultando = false; semRede = true;
+      if (e.status === 404) { reset(); return go('home'); }
+      desenhar();
+      if (vivo()) proximo = setTimeout(verificar, 3000);
+      return;
+    }
     consultando = false;
     if (!vivo()) return;
-    if (r.liberado) return go('tipo');
+    if (r.liberado) { limparConf(); return go('tipo'); } // só a confirmação do servidor libera
+    // Cliente clicou em "já paguei" mas o aviso não chegou ao servidor (rede): reenvia, sem alterar o prazo de 3 min.
+    if (r.pagamento === 'pendente' && desde() && S.mock !== true) {
+      try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); } catch (e) { if (e.status) limparConf(); }
+    }
     aplicar(r);
-    if (!r.podeRenovar) proximo = setTimeout(verificar, 3000); // expirado/recusado: para de consultar até gerar novo Pix
+    if (!r.podeRenovar && vivo()) proximo = setTimeout(verificar, 3000); // expirado/recusado: para até gerar novo Pix
   };
 
-  // Contagem regressiva (usa o relógio do servidor). Ao zerar, o servidor confirma o vencimento.
+  // Relógio local (1 s): contagem do Pix e troca automática para "ainda não identificado" aos 3 min.
   const contar = () => {
     if (!vivo()) return;
-    if (ultimo?.pagamento === 'informado') aplicar(ultimo); // troca para "ainda não identificado" ao passar de 3 min
+    desenhar();
     const el = document.getElementById('pay-timer');
     if (expiraMs && el) {
-      const falta = Math.max(0, expiraMs - (Date.now() + offset));
+      const falta = Math.max(0, expiraMs - Date.now());
       if (falta === 0) { el.textContent = 'Verificando a validade do Pix…'; verificar(); }
       else { const m = Math.floor(falta / 60000), sec = Math.floor((falta % 60000) / 1000); el.textContent = `Este Pix expira em ${m}:${String(sec).padStart(2, '0')}`; el.classList.toggle('urgente', falta < 60000); }
     }
     setTimeout(contar, 1000);
   };
-  contar();
+  // Aba em segundo plano tem timers atrasados: ao voltar, redesenha e consulta na hora.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && vivo()) { desenhar(); verificar(); } });
   payVerificarAgora = () => verificar();
+  desenhar();
+  contar();
   verificar();
 }
 
@@ -477,13 +517,18 @@ document.addEventListener('click', (e) => {
 });
 A.retry = () => render();
 // "Já fiz o pagamento" só AVISA que o Pix foi feito: a simulação continua bloqueada até a confirmação real do recebimento.
-A.paguei = async (el) => {
-  await busy(el, async () => {
-    try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); await payVerificarAgora?.(); }
-    catch (e) { setMsg($app, e.message); }
-  });
+// A tela de verificação aparece NA HORA (não espera o servidor) e o prazo de 3 min começa neste clique.
+A.paguei = async () => {
+  S.conf = { lead: S.lead.id, desde: Date.now() }; save();
+  payRedesenhar?.();
+  try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); }
+  catch (e) {
+    if (e.status) { S.conf = null; save(); payRedesenhar?.(); setMsg($app, e.message); } // recusado pelo servidor (ex.: Pix expirou)
+    // sem status = rede/timeout: a tela continua e o aviso é reenviado na próxima consulta
+  }
+  payVerificarAgora?.();
 };
-// Consulta imediata (a tela também consulta sozinha a cada 3 s, antes e depois dos 3 minutos).
+// Consulta imediata. Não reinicia o prazo e não esconde "Gerar novo Pix"; a tela também consulta sozinha a cada 3 s.
 A.verificar = async (el) => { await busy(el, async () => { await payVerificarAgora?.(); await new Promise((r) => setTimeout(r, 900)); }); };
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
 // Gera uma nova cobrança (o servidor só cria se não houver outra em aberto: cliques repetidos não duplicam).
@@ -491,13 +536,13 @@ A.novopix = async (el) => {
   await busy(el, async () => {
     try {
       const r = await api(`/api/lead/${S.lead.id}/novo-pix`, { method: 'POST' });
-      S.pix = r.pix; if (r.mock !== undefined) S.mock = r.mock; save();
+      S.pix = r.pix; S.conf = null; if (r.mock !== undefined) S.mock = r.mock; save();
       render();
     } catch (e) { setMsg($app, e.message); }
   });
 };
 // Cadastro novo com outros dados de contato: o anterior e o histórico de pagamentos continuam guardados.
-A.novocadastro = () => { S.lead = null; S.pix = null; S.mock = false; go('checkout'); };
+A.novocadastro = () => { S.lead = null; S.conf = null; S.pix = null; S.mock = false; go('checkout'); };
 A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead/${S.lead.id}/mock-pay`, { method: 'POST' }); go('tipo'); } catch (e) { setMsg($app, e.message); } }); };
 
 // ---- render ----
