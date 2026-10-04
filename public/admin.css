@@ -1,0 +1,53 @@
+body.admin main.wide{max-width:1200px}
+.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.tab{border:2px solid var(--line);background:#fff;border-radius:999px;padding:8px 16px;font:inherit;font-weight:700;font-size:.88rem;cursor:pointer;color:var(--navy)}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tabs .sp{flex:1}
+.tbl-wrap{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;font-size:.84rem;min-width:980px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f0f4fa;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0}
+tr.lead{cursor:pointer}tr.lead:hover{background:#f7faff}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.74rem;font-weight:700;background:#eef1f6;color:var(--muted)}
+.badge.agora{background:#fde7e3;color:#b3321f}.badge.conversar{background:#fff1d6;color:#8a5b00}.badge.depois{background:#e3eefc;color:#245aa8}
+.badge.pago{background:#e3f6ee;color:var(--green-d)}
+.det td{background:#fafcff;font-size:.82rem}
+.det dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 18px}
+.det dt{font-size:.7rem;text-transform:uppercase;color:var(--muted)}.det dd{margin:0;font-weight:600}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.chk{display:flex;gap:8px;align-items:center;font-weight:600}.chk input{width:auto}
+.plan-card{margin-bottom:12px}
+.plan-card h3{font-size:1rem;color:var(--navy);margin-bottom:10px}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn.sm.danger{background:var(--red)}
+.login{max-width:360px;margin:40px auto}
+.ok-msg{color:var(--green-d);font-weight:600;font-size:.9rem;margin-top:8px}
+.prev{font-size:.84rem;color:var(--muted);margin-top:10px;background:#f1f5fb;border-radius:10px;padding:10px}
+
+.filtros{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:6px}
+.filtros .field{margin:0}
+.acoes{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 12px}
+.muted{color:var(--muted);font-size:.85rem}
+.alerta{background:#fff4e5;border:1px solid #e8b96a;color:#6b4300;border-radius:12px;padding:10px 14px;margin-bottom:10px;font-size:.9rem}
+.print-only{display:none}
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  body{background:#fff}
+  .top,.no-print,.foot,.alerta,.tabs{display:none!important}
+  .print-only{display:block;margin-bottom:8px}
+  .print-only h2{margin:0}
+  main.wide{max-width:none;padding:0}
+  .tbl-wrap{border:0;overflow:visible}
+  table{min-width:0;width:100%;font-size:9pt}
+  th{position:static}
+  th,td{padding:4px 6px}
+  .np{display:none}
+  tr.det{display:none!important} /* dados sensíveis (CPF etc.) nunca saem na impressão da lista */
+  a{color:#000;text-decoration:none}
+}
+.excluir-box{border:1.5px solid var(--red);background:#fff5f4;border-radius:12px;padding:14px;margin:8px 0 4px}
+.excluir-box p{margin:0 0 10px}
+.alerta.info{background:#e8f1ff;border-color:#9bbcf0;color:#0b2447}
+.alerta.erro{background:#fdecea;border-color:#e08a82;color:#7a1710}
+
+.hist{margin:12px 0}.hist table{width:100%;margin-top:6px;font-size:.88rem}
