@@ -23,9 +23,10 @@ const call = async (path, { method = 'GET', body, headers = {} } = {}) => {
 const dados = { nome: 'Ana Souza', telefone: '11988887777', email: 'ana@exemplo.com', cpf: '52998224725', nascimento: '1990-05-10', nome_mae: 'Maria Souza', cidade: 'Curitiba', estado: 'PR', capacidade_label: 'R$500 a R$1.000', capacidade_valor: 1000, renda_mensal: 6000 };
 
 // Cada teste usa um "IP" próprio (X-Forwarded-For) para não dividir o limite de requisições.
-async function novoCliente() {
+async function novoCliente(contato = {}) {
   const xff = { 'X-Forwarded-For': `10.9.0.${++ip}` };
-  const co = await call('/api/checkout', { method: 'POST', headers: xff, body: { nome: dados.nome, telefone: dados.telefone, email: dados.email } });
+  const n = String(ip).padStart(4, '0');
+  const co = await call('/api/checkout', { method: 'POST', headers: xff, body: { nome: dados.nome, telefone: `1198888${n}`, email: `ana${n}@exemplo.com`, ...contato } });
   assert.equal(co.status, 200);
   const h = { ...xff, 'X-Lead-Token': co.data.token };
   const id = co.data.leadId;
@@ -171,4 +172,56 @@ test('limite de tentativas por cadastro', async () => {
 test('novo Pix exige o token do cliente', async () => {
   const c = await novoCliente();
   assert.equal((await call(`/api/lead/${c.id}/novo-pix`, { method: 'POST', headers: { 'X-Lead-Token': 'x' } })).status, 404);
+});
+
+test('cliente que volta com o mesmo e-mail e telefone retoma o cadastro e a cobrança (sem duplicar)', async () => {
+  const c = await novoCliente();
+  const dadosCo = { nome: dados.nome, telefone: `1198888${String(ip).padStart(4, '0')}`, email: `ana${String(ip).padStart(4, '0')}@exemplo.com` };
+  const xff = { 'X-Forwarded-For': `10.9.1.${ip}` };
+  const volta = await call('/api/checkout', { method: 'POST', headers: xff, body: dadosCo });
+  assert.equal(volta.status, 200); assert.equal(volta.data.retomado, true); assert.equal(volta.data.leadId, c.id);
+  assert.equal(volta.data.novo, false); assert.equal(volta.data.pix.copiaECola, c.co.data.pix.copiaECola); // mesma cobrança
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [c.id])).n, 1);
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM leads WHERE email = ?', [dadosCo.email])).n, 1);
+  // o token antigo deixa de valer; o novo acessa o cadastro
+  assert.equal((await call(`/api/lead/${c.id}/estado`, { headers: c.h })).status, 404);
+  assert.equal((await call(`/api/lead/${c.id}/estado`, { headers: { 'X-Lead-Token': volta.data.token } })).status, 200);
+  // vencido: ao voltar, recebe um Pix novo no mesmo cadastro
+  await c.vencer();
+  const v2 = await call('/api/checkout', { method: 'POST', headers: xff, body: dadosCo });
+  assert.equal(v2.data.leadId, c.id); assert.equal(v2.data.novo, true); assert.notEqual(v2.data.pix.copiaECola, c.co.data.pix.copiaECola);
+  // pago: ao voltar, já vem liberado e nada é cobrado
+  await webhook(`SIM${(await db.um("SELECT id FROM pagamentos WHERE lead_id = ? AND status = 'pendente'", [c.id])).id}`);
+  const v3 = await call('/api/checkout', { method: 'POST', headers: xff, body: dadosCo });
+  assert.equal(v3.data.pagamento, 'pago'); assert.equal(v3.data.liberado, true); assert.equal(v3.data.novo, false);
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [c.id])).n, 2);
+});
+
+test('mesmo e-mail com outro telefone NÃO retoma o cadastro alheio; envios simultâneos não duplicam', async () => {
+  const c = await novoCliente();
+  const email = `ana${String(ip).padStart(4, '0')}@exemplo.com`;
+  const outro = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': '10.9.2.1' }, body: { nome: 'Outra Pessoa', telefone: '21977770000', email } });
+  assert.notEqual(outro.data.leadId, c.id); assert.equal(outro.data.retomado, false);
+  const corpo = { nome: 'Dupla Aba', telefone: '31966660000', email: 'dupla@exemplo.com' };
+  const rs = await Promise.all([1, 2, 3].map((i) => call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.9.3.${i}` }, body: corpo })));
+  assert.equal(new Set(rs.map((r) => r.data.leadId)).size, 1);
+  assert.equal((await db.um("SELECT COUNT(*)::int AS n FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE l.email = 'dupla@exemplo.com'")).n, 1);
+});
+
+test('"já fiz o pagamento" não libera: fica em conferência, registra o horário e não mostra mais o código', async () => {
+  const c = await novoCliente();
+  const r = await call(`/api/lead/${c.id}/informar-pagamento`, { method: 'POST', headers: c.h });
+  assert.equal(r.data.pagamento, 'informado');
+  const e = (await c.estado()).data;
+  assert.equal(e.pagamento, 'informado'); assert.equal(e.liberado, false); assert.equal(e.pix, null);
+  assert.ok(Math.abs(Date.parse(e.informadoEm) - Date.parse(e.agora)) < 10000);
+  assert.equal((await c.simular()).status, 402);
+  // atualizar a página (novo estado): continua em conferência, com o mesmo horário
+  assert.equal((await c.estado()).data.informadoEm, e.informadoEm);
+  // confirmação com atraso (depois de muito tempo): reconhecida e libera
+  await db.exec("UPDATE pagamentos SET informado_em = now() - interval '10 minutes' WHERE lead_id = ?", [c.id]);
+  const id = (await db.um('SELECT id FROM pagamentos WHERE lead_id = ?', [c.id])).id;
+  assert.equal((await webhook(`SIM${id}`)).status, 200);
+  const f = (await c.estado()).data;
+  assert.equal(f.pagamento, 'pago'); assert.equal(f.liberado, true);
 });

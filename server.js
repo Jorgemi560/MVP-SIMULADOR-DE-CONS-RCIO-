@@ -168,7 +168,9 @@ const publicoPagamento = (pg) => ({
   pagamento: pg.status, liberado: pagamentoLiberado(pg.status),
   expiraEm: pg.status === 'pendente' && pg.expira_em ? new Date(pg.expira_em).toISOString() : null,
   agora: new Date().toISOString(),
-  pix: ['pendente', 'informado'].includes(pg.status) && codigoDe(pg) ? { copiaECola: codigoDe(pg) } : null,
+  informadoEm: pg.status === 'informado' && pg.informado_em ? new Date(pg.informado_em).toISOString() : null,
+  // Em conferência o código não é mais exibido: evita um segundo pagamento por engano.
+  pix: pg.status === 'pendente' && codigoDe(pg) ? { copiaECola: codigoDe(pg) } : null,
   podeRenovar: ['expirado', 'recusado', 'cancelado'].includes(pg.status),
   mock: provider.nome === 'mock',
 });
@@ -222,43 +224,26 @@ route('GET', '/api/plano-info', async (req, { url }) => {
   return { disponivel: !!esc, reduzida: !!esc?.calc.parcelaReduzida };
 });
 
-route('POST', '/api/checkout', async (req, { body }) => {
-  limit(req, 'checkout', 10, 600000);
-  if (!provider.pronto()) throw new HttpError(503, 'Pagamento temporariamente indisponível. Tente novamente em alguns minutos.');
-  const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
-  if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
-  if (!V.emailValido(email)) throw bad('E-mail inválido.');
-  if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
-
-  const token = crypto.randomBytes(24).toString('hex');
-  const pg = await tx(async (t) => {
-    const l = await t.um('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?) RETURNING id', [token, nome, email, telefone]);
-    return t.um("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, expira_em) VALUES (?,?,?, now() + ?::int * interval '1 minute') RETURNING *", [l.id, provider.nome, PRICE_CENTS, VALIDADE_MIN]);
-  });
-  const r = await iniciarCobranca(pg, { email, nome });
-  return { leadId: pg.lead_id, token, ...publicoPagamento({ ...pg, status: 'pendente' }), pix: r.pix };
-});
-
-route('GET', '/api/lead/:id/estado', async (req, { params }) => {
-  const lead = await leadAutenticado(req, params.id);
-  const pg = await pagamentoAtual(lead.id);
-  const n = (await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n;
-  return {
-    ...(pg ? publicoPagamento(pg) : { pagamento: 'pendente', liberado: false, expiraEm: null, agora: new Date().toISOString(), pix: null, podeRenovar: true, mock: provider.nome === 'mock' }),
-    tentativas: n, nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao,
-  };
-});
-
-// Gera um NOVO Pix quando o anterior venceu (ou foi recusado/cancelado). Nunca cria cobrança se já houver uma
-// aguardando pagamento, aguardando conferência ou paga: nesse caso devolve a que já existe (idempotente).
-route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
-  limit(req, 'novo-pix', 10, 600000);
-  const lead = await leadAutenticado(req, params.id);
-  if (!provider.pronto()) throw new HttpError(503, 'Pagamento temporariamente indisponível. Tente novamente em alguns minutos.');
+// Garante UMA cobrança válida para o cliente. Se já há uma aguardando, em conferência ou paga, devolve essa mesma
+// (nunca cria outra); só gera nova quando a anterior venceu, foi recusada ou cancelada. Usada pelo "Gerar novo Pix"
+// e pelo retorno do mesmo cliente (mesmo e-mail e telefone).
+async function garantirCobranca(lead) {
   const existente = async () => { const a = await pagamentoAtual(lead.id); return a && !['expirado', 'recusado', 'cancelado'].includes(a.status) ? a : null; };
   const reaproveita = (a) => ({ ...publicoPagamento(a), novo: false });
   let a = await existente();
   if (a) return reaproveita(a);
+  // Só gera outro Pix quando não há risco de o anterior ainda ser pago. No Mercado Pago o vencimento é do próprio provedor:
+  // confirmamos com ele. No Pix estático o banco não vence o código; o risco é mitigado porque o pagamento tardio
+  // continua reconhecível pelo txid (webhook/admin) e a tela avisa para não pagar duas vezes.
+  if (provider.nome === 'mercadopago') {
+    const ult = await um('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [lead.id]);
+    if (ult?.status === 'expirado' && ult.provedor_id && provider.nome === ult.provedor) {
+      let st = 'pendente';
+      try { st = await provider.consultar(ult.provedor_id); } catch { /* sem resposta: não arrisca */ }
+      if (st === 'pago') { await marcarPago(ult.id); return reaproveita(await pagamentoAtual(lead.id)); }
+      if (st === 'pendente') throw new HttpError(409, 'Ainda estamos confirmando o encerramento do Pix anterior. Tente novamente em instantes.');
+    }
+  }
   if ((await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n >= MAX_TENTATIVAS) {
     throw new HttpError(429, 'Muitas tentativas de pagamento neste cadastro. Fale com o nosso atendimento.');
   }
@@ -277,6 +262,55 @@ route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
   if (!pg) { a = await existente(); if (a) return reaproveita(a); throw new HttpError(409, 'Não foi possível gerar um novo Pix agora. Tente novamente.'); }
   const r = await iniciarCobranca(pg, { email: lead.email, nome: lead.nome });
   return { ...publicoPagamento({ ...pg, status: 'pendente' }), pix: r.pix, novo: true };
+}
+
+const MSG_INDISPONIVEL = 'Pagamento temporariamente indisponível. Tente novamente em alguns minutos.';
+
+route('POST', '/api/checkout', async (req, { body }) => {
+  limit(req, 'checkout', 10, 600000);
+  if (!provider.pronto()) throw new HttpError(503, MSG_INDISPONIVEL);
+  const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
+  if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
+  if (!V.emailValido(email)) throw bad('E-mail inválido.');
+  if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
+
+  const token = crypto.randomBytes(24).toString('hex');
+  const r0 = await tx(async (t) => {
+    // Trava por e-mail: dois envios simultâneos do mesmo e-mail não criam dois cadastros.
+    await t.exec('SELECT pg_advisory_xact_lock(hashtext(?))', [`checkout:${email}`]);
+    // Cliente que volta (mesmo e-mail E mesmo telefone) retoma o cadastro e a cobrança que já existem. Exigir os dois dados e
+    // trocar o token a cada retomada evita que alguém só com o e-mail de outra pessoa acesse o cadastro dela.
+    const ja = await t.um('SELECT id FROM leads WHERE email = ? AND telefone = ? AND excluido_em IS NULL ORDER BY id DESC LIMIT 1', [email, telefone]);
+    if (ja) { await t.exec('UPDATE leads SET token = ? WHERE id = ?', [token, ja.id]); return { leadId: ja.id, retomado: true }; }
+    const l = await t.um('INSERT INTO leads (token, nome, email, telefone) VALUES (?,?,?,?) RETURNING id', [token, nome, email, telefone]);
+    const pg = await t.um("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, expira_em) VALUES (?,?,?, now() + ?::int * interval '1 minute') RETURNING *", [l.id, provider.nome, PRICE_CENTS, VALIDADE_MIN]);
+    return { leadId: l.id, pg };
+  });
+  if (r0.retomado) {
+    const lead = await um('SELECT * FROM leads WHERE id = ?', [r0.leadId]);
+    return { leadId: lead.id, token, retomado: true, ...(await garantirCobranca(lead)) };
+  }
+  const r = await iniciarCobranca(r0.pg, { email, nome });
+  return { leadId: r0.leadId, token, retomado: false, ...publicoPagamento({ ...r0.pg, status: 'pendente' }), pix: r.pix };
+});
+
+route('GET', '/api/lead/:id/estado', async (req, { params }) => {
+  const lead = await leadAutenticado(req, params.id);
+  const pg = await pagamentoAtual(lead.id);
+  const n = (await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n;
+  return {
+    ...(pg ? publicoPagamento(pg) : { pagamento: 'pendente', liberado: false, expiraEm: null, agora: new Date().toISOString(), pix: null, podeRenovar: true, mock: provider.nome === 'mock' }),
+    tentativas: n, nome: lead.nome, email: lead.email, telefone: lead.telefone, simulado: !!lead.simulacao,
+  };
+});
+
+// Gera um NOVO Pix quando o anterior venceu (ou foi recusado/cancelado). Nunca cria cobrança se já houver uma
+// aguardando pagamento, aguardando conferência ou paga: nesse caso devolve a que já existe (idempotente).
+route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
+  limit(req, 'novo-pix', 10, 600000);
+  const lead = await leadAutenticado(req, params.id);
+  if (!provider.pronto()) throw new HttpError(503, MSG_INDISPONIVEL);
+  return garantirCobranca(lead);
 });
 
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
@@ -297,7 +331,7 @@ route('POST', '/api/lead/:id/informar-pagamento', async (req, { params }) => {
   if (!pg) throw new HttpError(404, 'Pagamento não encontrado');
   if (pg.status === 'expirado') throw new HttpError(409, 'Este Pix expirou. Gere um novo Pix para pagar.');
   if (pg.status === 'pendente') {
-    await exec("UPDATE pagamentos SET status='informado' WHERE id=? AND status='pendente'", [pg.id]);
+    await exec("UPDATE pagamentos SET status='informado', informado_em=now() WHERE id=? AND status='pendente'", [pg.id]);
     await exec("UPDATE leads SET status='novo' WHERE id=? AND status='aguardando_pagamento'", [lead.id]);
   }
   return { pagamento: (await um('SELECT status FROM pagamentos WHERE id=?', [pg.id])).status };

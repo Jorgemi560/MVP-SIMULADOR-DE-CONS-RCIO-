@@ -346,16 +346,40 @@ function enviarDados(form) {
 // Tela de pagamento: tudo vem do servidor (situação real da tentativa atual); nada do que ficou salvo no aparelho
 // é mostrado como se ainda valesse. Estados: pendente (contagem regressiva), informado (em conferência),
 // expirado/recusado/cancelado (gerar novo Pix) e pago (libera a simulação).
-let payLoop = 0;
+let payLoop = 0, payVerificarAgora = null;
+const VERIFICANDO_MS = 3 * 60 * 1000; // depois de 3 min em conferência, a tela passa a "ainda não identificado"
+const ICONE_RELOGIO = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 async function montarPagamento() {
   const box = document.getElementById('pay-box');
   const eu = ++payLoop;
   const vivo = () => eu === payLoop && S.tela === 'pagamento' && document.body.contains(box);
   const qrSvg = (txt) => { try { const q = qrcode(0, 'M'); q.addData(txt); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch { return ''; } };
-  let offset = 0, expiraMs = null, chave = '', consultando = false, proximo = null;
+  let offset = 0, expiraMs = null, informadoMs = null, chave = '', consultando = false, proximo = null, ultimo = null;
+  const agoraSrv = () => Date.now() + offset;
+  const faseConferencia = () => (informadoMs && agoraSrv() - informadoMs >= VERIFICANDO_MS ? 'tardia' : 'verificando');
   box.innerHTML = '<p class="loading">Verificando seu pagamento…</p>';
 
   const pintar = (r) => {
+    if (r.pagamento === 'informado') {
+      // O clique em "Já fiz o pagamento" só abre a conferência: quem libera é a confirmação do servidor.
+      box.innerHTML = faseConferencia() === 'verificando' ? `
+        <div class="verify" role="status" aria-live="polite">
+          <div class="verify-ico"><span class="ring"></span>${ICONE_RELOGIO}</div>
+          <h3>Verificando seu pagamento</h3>
+          <p>Estamos consultando o sistema. Aguarde alguns instantes.</p>
+          <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+          <p class="hint">Mantenha esta página aberta: a liberação é automática.</p>
+        </div>` : `
+        <div class="verify warn" role="status" aria-live="polite">
+          <div class="verify-ico still">${ICONE_RELOGIO}</div>
+          <h3>Pagamento ainda não identificado</h3>
+          <p>Ainda não identificamos seu pagamento. Se você já pagou, aguarde um pouco mais ou tente verificar novamente.</p>
+          <p class="nao-pagar">Se você já realizou o pagamento, <b>não faça outro Pix agora.</b></p>
+          <button class="btn" data-act="verificar" id="btn-verificar">VERIFICAR NOVAMENTE</button>
+          <p class="hint">Continuamos consultando automaticamente. Assim que o pagamento for confirmado, a simulação é liberada.</p>
+        </div>`;
+      return;
+    }
     if (r.podeRenovar) {
       const motivo = r.pagamento === 'expirado' ? 'O tempo para pagar este Pix terminou.' : 'Este pagamento não foi confirmado.';
       box.innerHTML = `
@@ -378,17 +402,18 @@ async function montarPagamento() {
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
       <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
-    if (r.pagamento === 'informado') avisarConferencia();
   };
 
   const aplicar = (r) => {
     offset = r.agora ? Date.parse(r.agora) - Date.now() : 0; // relógio do servidor manda (o do celular pode estar errado)
     expiraMs = r.expiraEm ? Date.parse(r.expiraEm) : null;
+    informadoMs = r.informadoEm ? Date.parse(r.informadoEm) : null;
+    ultimo = r;
     S.mock = !!r.mock;
     if (r.pix) S.pix = S.pix?.copiaECola === r.pix.copiaECola ? S.pix : r.pix;
     else if (r.podeRenovar || r.pagamento === 'pendente') { if (!S.mock) S.pix = null; } // código vencido nunca fica na tela
     save();
-    const nova = `${r.pagamento}|${r.pix?.copiaECola || ''}`;
+    const nova = `${r.pagamento}|${r.pix?.copiaECola || ''}|${r.pagamento === 'informado' ? faseConferencia() : ''}`;
     if (nova !== chave) { chave = nova; pintar(r); }
   };
 
@@ -409,6 +434,7 @@ async function montarPagamento() {
   // Contagem regressiva (usa o relógio do servidor). Ao zerar, o servidor confirma o vencimento.
   const contar = () => {
     if (!vivo()) return;
+    if (ultimo?.pagamento === 'informado') aplicar(ultimo); // troca para "ainda não identificado" ao passar de 3 min
     const el = document.getElementById('pay-timer');
     if (expiraMs && el) {
       const falta = Math.max(0, expiraMs - (Date.now() + offset));
@@ -418,6 +444,7 @@ async function montarPagamento() {
     setTimeout(contar, 1000);
   };
   contar();
+  payVerificarAgora = () => verificar();
   verificar();
 }
 
@@ -450,11 +477,14 @@ document.addEventListener('click', (e) => {
 });
 A.retry = () => render();
 // "Já fiz o pagamento" só AVISA que o Pix foi feito: a simulação continua bloqueada até a confirmação real do recebimento.
-function avisarConferencia() {
-  const b = document.getElementById('btn-paguei'); if (b) { b.disabled = true; b.textContent = 'AGUARDANDO CONFIRMAÇÃO…'; }
-  const st = document.getElementById('pay-status'); if (st) st.textContent = 'Pagamento informado. Estamos conferindo o recebimento; mantenha esta página aberta, a liberação é automática.';
-}
-A.paguei = async () => { try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); avisarConferencia(); } catch (e) { setMsg($app, e.message); } };
+A.paguei = async (el) => {
+  await busy(el, async () => {
+    try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); await payVerificarAgora?.(); }
+    catch (e) { setMsg($app, e.message); }
+  });
+};
+// Consulta imediata (a tela também consulta sozinha a cada 3 s, antes e depois dos 3 minutos).
+A.verificar = async (el) => { await busy(el, async () => { await payVerificarAgora?.(); await new Promise((r) => setTimeout(r, 900)); }); };
 A.copiar = async (el) => { try { await navigator.clipboard.writeText(S.pix.copiaECola); el.textContent = 'CÓDIGO COPIADO ✓'; } catch { el.textContent = 'Selecione e copie o código acima'; } };
 // Gera uma nova cobrança (o servidor só cria se não houver outra em aberto: cliques repetidos não duplicam).
 A.novopix = async (el) => {

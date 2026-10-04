@@ -43,6 +43,10 @@ Havendo vários planos para o tipo/valor, usa-se o de menor parcela. **Os planos
 
 ### Validade do Pix e novo Pix
 Cada cobrança vale `PIX_VALIDADE_MINUTOS` (padrão 30). Vencida e sem pagamento, a tentativa vira **expirado**: a tela mostra o aviso, o botão **GERAR NOVO PIX** cria uma nova cobrança de R$ 5,00 (uma só por vez, mesmo com cliques/abas repetidos; máx. 10 por cadastro) e o cadastro e o histórico de tentativas ficam guardados (visíveis em `/admin`, detalhe do lead). Ao reabrir o site, o servidor informa a situação real: aguardando, expirado, em conferência ou pago. Só `pago` libera a simulação; um pagamento confirmado nunca é alterado. Observação: o Pix **estático** não expira no banco (a validade é do sistema); se alguém pagar depois de vencido, o administrador ainda pode confirmar a tentativa correta em `/admin`. No Mercado Pago a validade também é enviada ao provedor.
+
+### Conferência do pagamento e cliente que volta
+- "Já fiz o pagamento" **não libera nada**: abre a tela "Verificando seu pagamento" (3 min) e depois "Pagamento ainda não identificado" com **VERIFICAR NOVAMENTE**; a consulta automática continua a cada 3 s. Quem libera é só a confirmação no servidor (admin, webhook ou Mercado Pago), mesmo que chegue com atraso. Em conferência o código Pix não é mais exibido (evita pagar duas vezes).
+- Quem volta com o **mesmo e-mail e telefone** retoma o cadastro e a cobrança existentes (nenhuma cobrança nova se há uma aguardando, em conferência ou paga). O token de acesso é trocado a cada retomada. Mesmo e-mail com outro telefone cria cadastro separado. O sistema não guarda nem compara CPF no pagamento (o CPF só é pedido depois, na simulação).
 - `PAYMENT_PROVIDER=mock`: só desenvolvimento; bloqueado com `NODE_ENV=production`.
 
 ## Notas
