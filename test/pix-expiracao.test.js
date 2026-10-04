@@ -128,18 +128,43 @@ test('pagamento tardio do Pix vencido (conta recebeu depois): o admin ainda pode
   assert.equal((await db.um("SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ? AND status = 'pendente'", [c.id])).n, 0);
 });
 
-test('"já paguei" bloqueia novo Pix até o admin decidir; recusado permite gerar outro', async () => {
+test('"já paguei" em conferência: novo Pix é recusado com explicação; passado o prazo de segurança o cliente não fica preso', async () => {
   const c = await novoCliente();
+  const antigoId = (await db.um('SELECT id FROM pagamentos WHERE lead_id = ?', [c.id])).id;
   assert.equal((await call(`/api/lead/${c.id}/informar-pagamento`, { method: 'POST', headers: c.h })).data.pagamento, 'informado');
   await c.vencer(); // informado não vence
   const e = (await c.estado()).data;
   assert.equal(e.pagamento, 'informado'); assert.equal(e.podeRenovar, false);
-  assert.equal((await c.novoPix()).data.novo, false);
+  // dentro do prazo de segurança: recusado, nada criado, mensagem clara
+  const r = await c.novoPix();
+  assert.equal(r.status, 409); assert.match(r.data.erro, /conferência/i); assert.match(r.data.erro, /duplicidade/i);
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [c.id])).n, 1);
+  // 20 min depois (> prazo de 15 min): gera o novo; o antigo vira "expirado" (histórico) e continua confirmável pelo txid
+  await db.exec("UPDATE pagamentos SET informado_em = now() - interval '20 minutes' WHERE lead_id = ?", [c.id]);
+  const n = await c.novoPix();
+  assert.equal(n.status, 200); assert.equal(n.data.novo, true); assert.equal(n.data.pagamento, 'pendente');
+  assert.equal((await db.um('SELECT status FROM pagamentos WHERE id = ?', [antigoId])).status, 'expirado');
+  assert.equal((await db.um("SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ? AND status = 'pendente'", [c.id])).n, 1);
+  assert.equal((await webhook(`SIM${antigoId}`)).status, 200); // o pagamento tardio do código antigo ainda é reconhecido
+  assert.equal((await c.estado()).data.liberado, true);
+});
+
+test('"já paguei" gravado antes da coluna informado_em existir recebe prazo (não fica verificando para sempre)', async () => {
+  const c = await novoCliente();
+  await call(`/api/lead/${c.id}/informar-pagamento`, { method: 'POST', headers: c.h });
+  await db.exec('UPDATE pagamentos SET informado_em = NULL WHERE lead_id = ?', [c.id]);
+  const e = (await c.estado()).data;
+  assert.equal(e.pagamento, 'informado'); assert.ok(e.informadoEm, 'informadoEm deve ser preenchido');
+  assert.equal((await c.estado()).data.informadoEm, e.informadoEm);
+});
+
+test('recusado pelo administrador libera gerar novo Pix na hora', async () => {
+  const c = await novoCliente();
+  await call(`/api/lead/${c.id}/informar-pagamento`, { method: 'POST', headers: c.h });
   const A = await admin();
   assert.equal((await call(`/api/admin/leads/${c.id}/pagamento`, { method: 'POST', headers: A, body: { acao: 'recusar' } })).status, 200);
   assert.equal((await c.estado()).data.podeRenovar, true);
-  const n = await c.novoPix();
-  assert.equal(n.data.novo, true); assert.equal(n.data.pagamento, 'pendente');
+  assert.equal((await c.novoPix()).data.novo, true);
 });
 
 test('painel: situação "expirado" na lista e no filtro, com contagem de tentativas', async () => {
