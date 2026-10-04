@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { pronto: bancoPronto, todos, um, exec, tx, getConfig, setConfig, persistencia } = require('./lib/db');
-const { provider, codigoPix, contaPix, validadeMinutos } = require('./lib/payment');
+const { provider, codigoPix, contaPix, chavePixProblema, validadeMinutos, assinaturaMpValida, mpInfo } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
@@ -134,10 +134,16 @@ async function marcarPago(pagamentoId) {
 
 // Consulta o provedor (quando há API), confirma se pagou e grava a expiração. Devolve a tentativa atualizada.
 // Mesmo vencida, ainda perguntamos ao provedor: um pagamento feito no último segundo não pode ser perdido.
+const consultasEmVoo = new Map(); // várias consultas simultâneas da mesma cobrança dividem uma só chamada ao provedor
+const esperadoDe = (pg) => ({ pagamentoId: pg.id, valorCentavos: pg.valor_centavos });
+function consultarProvedor(pg) {
+  if (!consultasEmVoo.has(pg.id)) consultasEmVoo.set(pg.id, provider.consultar(pg.provedor_id, esperadoDe(pg)).finally(() => consultasEmVoo.delete(pg.id)));
+  return consultasEmVoo.get(pg.id);
+}
 async function sincronizarPagamento(pg) {
   if (['pendente', 'expirado'].includes(pg.status) && pg.provedor === provider.nome && pg.provedor_id && !['mock', 'pix'].includes(provider.nome)) {
     try {
-      const novo = await provider.consultar(pg.provedor_id);
+      const novo = await consultarProvedor(pg);
       if (novo === 'pago') await marcarPago(pg.id);
       else if (novo !== 'pendente' && pg.status === 'pendente') await exec("UPDATE pagamentos SET status=? WHERE id=? AND status='pendente'", [novo, pg.id]);
     } catch (e) { console.error('Falha ao consultar o provedor de pagamento:', e.message); } // segue com o que já sabemos
@@ -251,7 +257,7 @@ async function garantirCobranca(lead, { renovar = false } = {}) {
     const ult = await um('SELECT * FROM pagamentos WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [lead.id]);
     if (ult?.status === 'expirado' && ult.provedor_id && provider.nome === ult.provedor) {
       let st = 'pendente';
-      try { st = await provider.consultar(ult.provedor_id); } catch { /* sem resposta: não arrisca */ }
+      try { st = await provider.consultar(ult.provedor_id, esperadoDe(ult)); } catch { /* sem resposta: não arrisca */ }
       if (st === 'pago') { await marcarPago(ult.id); return reaproveita(await pagamentoAtual(lead.id)); }
       if (st === 'pendente') throw new HttpError(409, 'Ainda estamos confirmando o encerramento do Pix anterior. Tente novamente em instantes.');
     }
@@ -366,13 +372,19 @@ route('POST', '/api/webhooks/pix', async (req, { body }) => {
   return { ok: true };
 });
 
+// Aviso (webhook) do Mercado Pago. Autenticidade em duas camadas: (1) assinatura x-signature, quando MP_WEBHOOK_SECRET está definido;
+// (2) o corpo NUNCA é confiado: o status é sempre consultado na API do Mercado Pago, com conferência de valor e referência.
 route('POST', '/api/webhooks/mercadopago', async (req, { body, url }) => {
   if (provider.nome !== 'mercadopago') return { ok: true };
-  const id = body?.data?.id ?? url.searchParams.get('data.id') ?? url.searchParams.get('id');
+  limit(req, 'webhook-mp', 300, 60000);
+  const id = url.searchParams.get('data.id') ?? body?.data?.id ?? url.searchParams.get('id');
   if (!id || !/^\d+$/.test(String(id))) return { ok: true };
-  // Não confiamos no corpo: consultamos o status direto na API do provedor.
+  const ass = assinaturaMpValida({ dataId: url.searchParams.get('data.id') ?? id, xSignature: req.headers['x-signature'], xRequestId: req.headers['x-request-id'] });
+  if (ass === false) { console.error('Webhook do Mercado Pago com assinatura inválida: ignorado.'); throw new HttpError(401, 'Assinatura inválida'); }
+  const tipo = body?.type ?? url.searchParams.get('type') ?? url.searchParams.get('topic');
+  if (tipo && tipo !== 'payment') return { ok: true }; // outros eventos (ex.: planos, merchant_order) não interessam
   const pg = await um('SELECT * FROM pagamentos WHERE provedor = ? AND provedor_id = ?', ['mercadopago', String(id)]);
-  if (pg) await sincronizarPagamento(pg);
+  if (pg) { const antes = pg.status; const depois = await sincronizarPagamento(pg); if (antes !== 'pago' && depois.status === 'pago') console.log(`Pagamento ${pg.id} confirmado por webhook.`); }
   return { ok: true };
 });
 
@@ -561,7 +573,7 @@ route('GET', '/api/admin/status', async (req) => {
   return {
     banco: { tipo: PERSISTENCIA.tipo, persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
     senhaFraca: SENHA_FRACA,
-    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
+    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, chaveProblema: provider.nome === 'pix' ? chavePixProblema() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16, mp: provider.nome === 'mercadopago' ? mpInfo() : null },
     whatsapp: { numero: fmtTel(w.numero.replace(/^55/, '')), origem: w.origem },
     aConferir: await contarAConferir(),
   };
@@ -755,10 +767,31 @@ if (require.main === module) {
   bancoPronto
     .then(() => server.listen(PORT, () => console.log(`Simulador de Consórcio em http://localhost:${PORT}  (pagamento: ${provider.nome})  admin: /admin`)))
     .catch((e) => { console.error('Não foi possível iniciar o banco de dados:', e.message); process.exit(1); });
+  if (provider.nome === 'mercadopago') {
+    const seg = Math.max(10, Number(process.env.MP_VARREDURA_SEGUNDOS) || 30);
+    setInterval(() => { varrerMercadoPago(); }, seg * 1000).unref();
+    bancoPronto.then(() => varrerMercadoPago()).catch(() => {}); // ao iniciar (ex.: depois de um deploy), recupera o que ficou pendente
+  }
   // O Render envia SIGTERM em cada deploy/reinício: encerra com calma (termina requisições e fecha as conexões do banco).
   process.on('SIGTERM', () => {
     setTimeout(() => process.exit(0), 8000).unref();
     server.close(() => require('./lib/db').fechar().catch(() => {}).finally(() => process.exit(0)));
   });
 }
-module.exports = { server };
+// Varredura em segundo plano (rede de segurança): reconcilia com o Mercado Pago as cobranças recentes ainda sem desfecho.
+// Garante a liberação mesmo que o webhook não chegue e o cliente tenha fechado a página.
+let varrendo = false;
+async function varrerMercadoPago() {
+  if (provider.nome !== 'mercadopago' || varrendo) return 0;
+  varrendo = true; let confirmados = 0;
+  try {
+    const abertos = await todos("SELECT * FROM pagamentos WHERE provedor = 'mercadopago' AND provedor_id IS NOT NULL AND status IN ('pendente','expirado') AND criado_em > now() - interval '24 hours' ORDER BY id DESC LIMIT 100");
+    for (const pg of abertos) {
+      try { const r = await sincronizarPagamento(pg); if (r.status === 'pago') { confirmados++; console.log(`Pagamento ${pg.id} confirmado pela varredura.`); } }
+      catch (e) { console.error('Varredura: falha ao reconciliar um pagamento:', e.message); }
+    }
+  } catch (e) { console.error('Varredura de pagamentos falhou:', e.message); }
+  finally { varrendo = false; }
+  return confirmados;
+}
+module.exports = { server, varrerMercadoPago };

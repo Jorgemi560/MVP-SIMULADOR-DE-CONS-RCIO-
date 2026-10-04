@@ -14,7 +14,9 @@
     "migrar:sqlite": "node --disable-warning=ExperimentalWarning scripts/migrar-sqlite-para-postgres.js",
     "db:verificar": "node --disable-warning=ExperimentalWarning scripts/db.js verificar",
     "db:criar": "node --disable-warning=ExperimentalWarning scripts/db.js criar",
-    "db:schema": "node scripts/gerar-schema-sql.js"
+    "db:schema": "node scripts/gerar-schema-sql.js",
+    "pix:verificar": "node --disable-warning=ExperimentalWarning scripts/pix-verificar.js",
+    "mp:verificar": "node --disable-warning=ExperimentalWarning scripts/mp-verificar.js"
   },
   "dependencies": {
     "pg": "^8.23.1"
