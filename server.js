@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { pronto: bancoPronto, todos, um, exec, tx, getConfig, setConfig, persistencia } = require('./lib/db');
-const { provider, codigoPix, contaPix, validadeMinutos } = require('./lib/payment');
+const { provider, codigoPix, contaPix, chavePixProblema, validadeMinutos } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
@@ -561,7 +561,7 @@ route('GET', '/api/admin/status', async (req) => {
   return {
     banco: { tipo: PERSISTENCIA.tipo, persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
     senhaFraca: SENHA_FRACA,
-    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
+    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, chaveProblema: provider.nome === 'pix' ? chavePixProblema() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16 },
     whatsapp: { numero: fmtTel(w.numero.replace(/^55/, '')), origem: w.origem },
     aConferir: await contarAConferir(),
   };

@@ -159,3 +159,11 @@ No `/admin`, clique na linha do lead → **Excluir cadastro…** → escolha o m
 5. Só então remova o disco (Settings → Disks). Guarde o arquivo antes, se quiser.
 
 **Atenção à ordem:** sem `DATABASE_URL` definida, a nova versão não inicia. Se isso acontecer, o site fica fora do ar até você definir a variável (o log mostra a mensagem). Por isso a variável vem **antes** do deploy.
+
+## Se o banco diz "QR Code expirado ou inválido, entre em contato com o recebedor"
+Com `PAYMENT_PROVIDER=pix` o código é **estático**: não existe validade no banco (a contagem do site é só do sistema). Essa mensagem do banco indica problema na **chave ou na conta**, não em prazo. Passo a passo:
+1. Rode `npm run pix:verificar` (com as mesmas variáveis do Render) ou veja o aviso azul/vermelho em `/admin`: ele mostra o tipo da chave reconhecida e avisa se ela foi normalizada.
+2. A chave precisa estar no formato do Pix: CPF/CNPJ só números · celular `+55DDDNÚMERO` · e-mail e chave aleatória em minúsculas. O sistema normaliza e **bloqueia o pagamento** se a chave não for reconhecível, mas atualize `PIX_CHAVE` no Render para o valor correto.
+3. Confirme no app do banco **dono da chave** que ela está **cadastrada e ativa** para receber Pix (chave de conta de pagamento/instituição que não oferece Pix estático ou chave não registrada gera exatamente essa mensagem).
+4. Cole o código de exemplo do passo 1 no "Pix copia e cola" de **outro** banco. Se o titular aparecer, o código está certo; se o erro persistir, é a conta/chave.
+5. Se a conta não aceitar Pix estático, use `PAYMENT_PROVIDER=mercadopago` (Pix dinâmico, validade real, confirmação automática; ainda sem teste com credencial real).

@@ -42,12 +42,12 @@ async function cliente() {
   return { id: co.data.leadId, co, h, estado: () => call(`/api/lead/${co.data.leadId}/estado`, { headers: h }), novoPix: () => call(`/api/lead/${co.data.leadId}/novo-pix`, { method: 'POST', headers: h }) };
 }
 
-test('a validade é enviada ao Mercado Pago (date_of_expiration, mínimo 30 min)', async () => {
+test('a validade é enviada ao Mercado Pago (date_of_expiration com folga sobre o mínimo de 30 min)', async () => {
   const c = await cliente();
   const corpo = criados.at(-1);
   const falta = Date.parse(corpo.date_of_expiration) - Date.now();
   assert.match(corpo.date_of_expiration, /\+00:00$/);
-  assert.ok(falta > 29 * 60000 && falta <= 30 * 60000 + 5000, `validade ${falta}ms`);
+  assert.ok(falta > 33 * 60000 && falta <= 35 * 60000 + 5000, `validade ${falta}ms`); // sempre acima do mínimo de 30 min do MP
   assert.equal(corpo.transaction_amount, 5);
   assert.ok(c.co.data.pix.copiaECola.startsWith('000201MP'));
 });

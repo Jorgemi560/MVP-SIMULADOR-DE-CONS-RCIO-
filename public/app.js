@@ -476,7 +476,7 @@ async function montarPagamento() {
     if (expiraMs && el) {
       const falta = Math.max(0, expiraMs - Date.now());
       if (falta === 0) { el.textContent = 'Verificando a validade do Pix…'; verificar(); }
-      else { const m = Math.floor(falta / 60000), sec = Math.floor((falta % 60000) / 1000); el.textContent = `Este Pix expira em ${m}:${String(sec).padStart(2, '0')}`; el.classList.toggle('urgente', falta < 60000); }
+      else { const m = Math.floor(falta / 60000), sec = Math.floor((falta % 60000) / 1000); el.textContent = `Tempo para pagar: ${m}:${String(sec).padStart(2, '0')}`; el.classList.toggle('urgente', falta < 60000); }
     }
     setTimeout(contar, 1000);
   };

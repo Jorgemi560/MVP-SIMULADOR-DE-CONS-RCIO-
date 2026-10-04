@@ -86,8 +86,9 @@ async function mostrarAlertas() {
   try {
     const st = await api('/api/admin/status'), el = document.getElementById('alertas'); if (!el) return;
     const av = [], info = [];
-    if (st.pagamento.provedor === 'pix' && !st.pagamento.pronto) av.push('<b>Pagamento indisponível:</b> defina <code>PIX_CHAVE</code> e <code>PIX_RECEBEDOR</code> nas variáveis do Render. Enquanto isso, ninguém consegue pagar.');
-    else if (st.pagamento.conta) info.push(`<b>Conta que recebe os pagamentos Pix:</b> ${esc(st.pagamento.conta.recebedor)} · chave ${esc(st.pagamento.conta.chave)}. Confira se é a conta correta; o titular é definido pela chave Pix (<code>PIX_CHAVE</code>).`);
+    if (st.pagamento.chaveProblema) av.push(`<b>Chave Pix inválida:</b> ${esc(st.pagamento.chaveProblema)} Ajuste <code>PIX_CHAVE</code> no Render (CPF/CNPJ só números, celular +55DDDNÚMERO, e-mail e chave aleatória em minúsculas). Enquanto isso, ninguém consegue pagar.`);
+    else if (st.pagamento.provedor === 'pix' && !st.pagamento.pronto) av.push('<b>Pagamento indisponível:</b> defina <code>PIX_CHAVE</code> e <code>PIX_RECEBEDOR</code> nas variáveis do Render. Enquanto isso, ninguém consegue pagar.');
+    else if (st.pagamento.conta) info.push(`<b>Conta que recebe os pagamentos Pix:</b> ${esc(st.pagamento.conta.recebedor)} · chave ${esc(st.pagamento.conta.chave)} (tipo: ${esc(st.pagamento.conta.tipoChave)}${st.pagamento.conta.chaveAjustada ? '; <b>a chave configurada foi normalizada para o formato do Pix</b>, atualize a variável' : ''}). Confira se é a conta correta; o titular é definido pela chave Pix (<code>PIX_CHAVE</code>).`);
     if (!st.banco.persistente) av.push('<b>Atenção:</b> o banco de dados atual é local e não persistente (somente para testes). Os leads seriam perdidos. Defina <code>DATABASE_URL</code> com o PostgreSQL externo.');
     if (st.senhaFraca) av.push('A senha do painel tem menos de 10 caracteres. Troque a variável <code>ADMIN_PASSWORD</code> por uma mais forte.');
     if (st.pagamento.confirmacao === 'manual' && st.aConferir) av.push(`<b>${st.aConferir} pagamento(s) a conferir.</b> Confira o recebimento no extrato do banco e confirme no cadastro do lead. O cliente só é liberado depois da confirmação.`);
