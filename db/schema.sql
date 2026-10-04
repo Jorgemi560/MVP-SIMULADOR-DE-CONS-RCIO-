@@ -40,12 +40,15 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
     pago_em TIMESTAMPTZ,
     expira_em TIMESTAMPTZ,
-    pix_codigo TEXT
+    pix_codigo TEXT,
+    informado_em TIMESTAMPTZ
   );
 
 ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS expira_em TIMESTAMPTZ;
 
 ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS pix_codigo TEXT;
+
+ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS informado_em TIMESTAMPTZ;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pag_pendente_por_lead ON pagamentos(lead_id) WHERE status = 'pendente';
 
