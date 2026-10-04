@@ -5,6 +5,7 @@ const brl = (n) => Number(n).toLocaleString('pt-BR', { style: 'currency', curren
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // Valor da simulação: vem do servidor (centavos), o mesmo usado na cobrança; padrão R$ 5,00.
 let PRECO_TXT = 'R$ 5,00';
+let PROVEDOR = ''; // 'mercadopago' = confirmação automática; 'pix' = Pix estático (o cliente avisa e o servidor aguarda a confirmação)
 const digits = (s) => String(s || '').replace(/\D/g, '');
 
 const CREDITOS = {
@@ -352,6 +353,7 @@ function enviarDados(form) {
 // tela acontece por um relógio local, sem depender de resposta do servidor. Visões: pendente (contagem do Pix), verificando
 // (até 3 min), tardia (sem confirmação após 3 min), renovar (expirado/recusado/cancelado) e pago (libera a simulação).
 let payLoop = 0, payVerificarAgora = null, payRedesenhar = null;
+const INTERVALO = () => (PROVEDOR === 'mercadopago' ? 2000 : 3000); // com confirmação automática, consulta mais rápido
 const VERIFICANDO_MS = 3 * 60 * 1000;
 const ICONE_RELOGIO = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 async function montarPagamento() {
@@ -407,10 +409,11 @@ async function montarPagamento() {
       ${pix?.qrBase64 ? `<img class="qr" alt="QR Code Pix" src="data:image/png;base64,${esc(pix.qrBase64)}">` : ''}
       ${pix?.copiaECola && !pix.qrBase64 ? `<div class="qr" role="img" aria-label="QR Code Pix">${qrSvg(pix.copiaECola)}</div>` : ''}
       ${pix?.copiaECola ? `<p style="font-size:.9rem;margin-top:6px">Pix copia e cola:</p><div class="copy">${esc(pix.copiaECola)}</div><button class="btn ghost" data-act="copiar">COPIAR CÓDIGO PIX</button>` : ''}
-      ${pix?.copiaECola && !S.mock ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague ${PRECO_TXT} e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
+      ${pix?.copiaECola && !S.mock && PROVEDOR !== 'mercadopago' ? `<button class="btn" data-act="paguei" id="btn-paguei" style="margin-top:10px">JÁ FIZ O PAGAMENTO</button><p class="hint">Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code), pague ${PRECO_TXT} e volte aqui. Sua simulação é liberada assim que o pagamento for confirmado.</p>` : ''}
+      ${pix?.copiaECola && PROVEDOR === 'mercadopago' ? `<div class="auto-wait" role="status" aria-live="polite"><span class="mini-ring" aria-hidden="true"></span><div><b>Aguardando o pagamento…</b><br>Abra o app do seu banco, escolha Pix → Pix copia e cola (ou leia o QR Code) e pague ${PRECO_TXT}. <b>Você não precisa clicar em nada:</b> assim que o Pix for aprovado, a próxima etapa abre sozinha.</div></div>` : ''}
       ${S.mock ? `<div class="test"><b>Modo de teste:</b> nenhum pagamento real é cobrado. Em produção, configure o provedor Pix (veja o README).</div><button class="btn" data-act="mock">SIMULAR PAGAMENTO APROVADO</button>` : ''}
       ${!pix && !S.mock ? `<p class="loading">Aguardando dados do pagamento…</p>` : ''}
-      <p class="msg" role="alert"></p><p class="hint" id="pay-status">Aguardando confirmação…</p>`;
+      <p class="msg" role="alert"></p>${PROVEDOR === 'mercadopago' ? '' : '<p class="hint" id="pay-status">Aguardando confirmação…</p>'}`;
   };
 
   // Redesenha só quando a visão muda (sem piscar). Chamado a cada segundo pelo relógio local e a cada resposta.
@@ -454,18 +457,22 @@ async function montarPagamento() {
       consultando = false; semRede = true;
       if (e.status === 404) { reset(); return go('home'); }
       desenhar();
-      if (vivo()) proximo = setTimeout(verificar, 3000);
+      if (vivo()) proximo = setTimeout(verificar, INTERVALO());
       return;
     }
     consultando = false;
     if (!vivo()) return;
-    if (r.liberado) { limparConf(); return go('tipo'); } // só a confirmação do servidor libera
+    if (r.liberado) { // só a confirmação do servidor libera
+      limparConf();
+      box.innerHTML = '<div class="verify" role="status"><div class="verify-ico ok">✔</div><h3>Pagamento confirmado!</h3><p>Liberando sua simulação…</p></div>';
+      return setTimeout(() => { if (S.tela === 'pagamento') go('tipo'); }, 700);
+    }
     // Cliente clicou em "já paguei" mas o aviso não chegou ao servidor (rede): reenvia, sem alterar o prazo de 3 min.
     if (r.pagamento === 'pendente' && desde() && S.mock !== true) {
       try { await api(`/api/lead/${S.lead.id}/informar-pagamento`, { method: 'POST' }); } catch (e) { if (e.status) limparConf(); }
     }
     aplicar(r);
-    if (!r.podeRenovar && vivo()) proximo = setTimeout(verificar, 3000); // expirado/recusado: para até gerar novo Pix
+    if (!r.podeRenovar && vivo()) proximo = setTimeout(verificar, INTERVALO()); // expirado/recusado: para até gerar novo Pix
   };
 
   // Relógio local (1 s): contagem do Pix e troca automática para "ainda não identificado" aos 3 min.
@@ -582,4 +589,4 @@ $app.addEventListener('submit', (e) => {
   if (e.target.id === 'f-dados') enviarDados(e.target);
 });
 
-api('/api/config').then((c) => { if (Number.isInteger(c.precoCentavos) && c.precoCentavos > 0) PRECO_TXT = brl(c.precoCentavos / 100); }).catch(() => {}).finally(render);
+api('/api/config').then((c) => { PROVEDOR = c.provedor || ''; if (Number.isInteger(c.precoCentavos) && c.precoCentavos > 0) PRECO_TXT = brl(c.precoCentavos / 100); }).catch(() => {}).finally(render);

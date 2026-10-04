@@ -167,3 +167,24 @@ Com `PAYMENT_PROVIDER=pix` o código é **estático**: não existe validade no b
 3. Confirme no app do banco **dono da chave** que ela está **cadastrada e ativa** para receber Pix (chave de conta de pagamento/instituição que não oferece Pix estático ou chave não registrada gera exatamente essa mensagem).
 4. Cole o código de exemplo do passo 1 no "Pix copia e cola" de **outro** banco. Se o titular aparecer, o código está certo; se o erro persistir, é a conta/chave.
 5. Se a conta não aceitar Pix estático, use `PAYMENT_PROVIDER=mercadopago` (Pix dinâmico, validade real, confirmação automática; ainda sem teste com credencial real).
+
+## Confirmação 100% automática com Mercado Pago (sem você)
+Com `PAYMENT_PROVIDER=mercadopago` cada cliente recebe uma cobrança Pix **própria** (com identificador). Quando ela é paga, o sistema reconhece sozinho e libera a simulação, 24 h por dia. O dinheiro cai na sua conta do Mercado Pago (você transfere para a Conta Simples por Pix/TED; confira tarifas e prazos de saque no Mercado Pago).
+
+**Como o sistema se mantém confiável (três camadas):** (1) aviso automático do Mercado Pago (webhook); (2) a tela do cliente consulta o Mercado Pago a cada 2 s; (3) uma varredura em segundo plano a cada 30 s reconcilia tudo que está pendente (cobre webhook perdido e cliente que fechou a página). Só vale como pago se o Mercado Pago disser "approved", com a **referência** e o **valor** da nossa cobrança.
+
+### O que configurar no Render (Environment)
+| Variável | Valor |
+|---|---|
+| `PAYMENT_PROVIDER` | `mercadopago` |
+| `MP_ACCESS_TOKEN` | token de **produção** (`APP_USR-…`) de Mercado Pago → Seu negócio → Configurações → Credenciais (nunca `TEST-…`) |
+| `PUBLIC_URL` | `https://ganhemaisno.online` |
+| `MP_WEBHOOK_SECRET` | *(recomendado)* "assinatura secreta" mostrada ao configurar o webhook (abaixo) |
+
+### Webhook no painel do Mercado Pago
+Suas integrações → sua aplicação → **Webhooks** → modo **Produção** → URL `https://ganhemaisno.online/api/webhooks/mercadopago` → evento **Pagamentos** → Salvar → copie a **assinatura secreta** para `MP_WEBHOOK_SECRET`. (Sem o painel o sistema ainda funciona: envia a URL em cada cobrança e tem as camadas 2 e 3.)
+
+### Conferir antes de usar
+1. No Shell do Render (ou local com as mesmas variáveis): `npm run mp:verificar`. Ele valida o token e o `PUBLIC_URL` **sem criar cobrança**.
+2. `/admin` mostra o aviso: "Mercado Pago: confirmação automática ativa". Se aparecer aviso vermelho (token de teste, `PUBLIC_URL` faltando), corrija.
+3. **Teste real:** faça um Pix de R$ 5,00 pelo site e **não clique em nada**: a tela deve avançar sozinha para a escolha imóvel/veículo em poucos segundos. Confira o log do Render ("Pagamento N confirmado por webhook" ou "pela varredura").

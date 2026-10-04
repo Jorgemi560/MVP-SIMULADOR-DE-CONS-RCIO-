@@ -164,3 +164,9 @@ body.is-home main{max-width:none;padding:0}
 .btn.outline-gray{background:#fff;color:var(--navy);border:2px solid var(--line);box-shadow:none;margin-top:10px}
 .btn.outline-gray:hover{background:#f4f7fb}
 .verify.warn .nao-pagar{background:none;border:0;padding:0;margin:14px 0;font-size:1.12rem;font-weight:700;color:var(--navy)}
+
+/* Mercado Pago: espera automática */
+.auto-wait{display:flex;gap:12px;align-items:flex-start;text-align:left;background:#eaf1fd;border-radius:14px;padding:14px;margin-top:12px;font-size:.92rem;color:var(--ink)}
+.mini-ring{flex:none;width:22px;height:22px;margin-top:2px;border:3px solid #cddcf7;border-top-color:var(--green);border-radius:50%;animation:spin 1s linear infinite}
+.verify-ico.ok{color:#fff;background:var(--green);font-size:2rem;font-weight:800}
+@media (prefers-reduced-motion:reduce){.mini-ring{animation:none}}

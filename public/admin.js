@@ -86,6 +86,12 @@ async function mostrarAlertas() {
   try {
     const st = await api('/api/admin/status'), el = document.getElementById('alertas'); if (!el) return;
     const av = [], info = [];
+    const mp = st.pagamento.mp;
+    if (mp) {
+      if (mp.tokenTipo === 'teste') av.push('<b>Mercado Pago em modo de TESTE:</b> o token é de teste (<code>TEST-…</code>); pagamentos de verdade NÃO serão reconhecidos. Use o token de produção (<code>APP_USR-…</code>).');
+      if (!mp.publicUrl) av.push('<b>Aviso automático (webhook) desligado:</b> defina <code>PUBLIC_URL</code> (ex.: https://ganhemaisno.online). Sem isso o sistema ainda reconhece os pagamentos consultando o Mercado Pago, só que um pouco mais devagar.');
+      else info.push('Mercado Pago: confirmação automática ativa (webhook + consulta direta' + (mp.webhookSecret ? ' + assinatura validada' : '') + ').');
+    }
     if (st.pagamento.chaveProblema) av.push(`<b>Chave Pix inválida:</b> ${esc(st.pagamento.chaveProblema)} Ajuste <code>PIX_CHAVE</code> no Render (CPF/CNPJ só números, celular +55DDDNÚMERO, e-mail e chave aleatória em minúsculas). Enquanto isso, ninguém consegue pagar.`);
     else if (st.pagamento.provedor === 'pix' && !st.pagamento.pronto) av.push('<b>Pagamento indisponível:</b> defina <code>PIX_CHAVE</code> e <code>PIX_RECEBEDOR</code> nas variáveis do Render. Enquanto isso, ninguém consegue pagar.');
     else if (st.pagamento.conta) info.push(`<b>Conta que recebe os pagamentos Pix:</b> ${esc(st.pagamento.conta.recebedor)} · chave ${esc(st.pagamento.conta.chave)} (tipo: ${esc(st.pagamento.conta.tipoChave)}${st.pagamento.conta.chaveAjustada ? '; <b>a chave configurada foi normalizada para o formato do Pix</b>, atualize a variável' : ''}). Confira se é a conta correta; o titular é definido pela chave Pix (<code>PIX_CHAVE</code>).`);
