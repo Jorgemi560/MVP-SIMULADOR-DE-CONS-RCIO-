@@ -165,6 +165,40 @@ T.credito = () => `
     </div>
   </section>`;
 
+// Data de nascimento em 3 seletores nativos (dia / mês / ano): no iPhone viram a roleta do sistema, no Android uma lista e no computador
+// um menu, e o ano é escolhido direto (sem voltar mês a mês). O valor continua indo ao servidor como AAAA-MM-DD (campo oculto "nascimento"),
+// e a validação de 18 anos continua no servidor. Só há anos até (ano atual - 18): data futura não é possível de escolher.
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function camposNascimento(valor) {
+  const [a, m, di] = /^\d{4}-\d{2}-\d{2}$/.test(valor || '') ? valor.split('-').map(Number) : [0, 0, 0];
+  const ate = new Date().getFullYear() - 18, de = new Date().getFullYear() - 100;
+  const anos = []; for (let y = ate; y >= de; y--) anos.push(y);
+  const opt = (v, t, sel) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${t}</option>`;
+  return `<div class="dn" role="group" aria-labelledby="nasc-rotulo">
+    <select id="nasc-d" aria-label="Dia" autocomplete="bday-day"><option value="">Dia</option>${Array.from({ length: 31 }, (_, i) => opt(i + 1, i + 1, di)).join('')}</select>
+    <select id="nasc-m" aria-label="Mês" autocomplete="bday-month"><option value="">Mês</option>${MESES.map((n, i) => opt(i + 1, n.replace(/^./, (c) => c.toUpperCase()), m)).join('')}</select>
+    <select id="nasc-a" aria-label="Ano" autocomplete="bday-year"><option value="">Ano</option>${anos.map((y) => opt(y, y, a)).join('')}</select>
+    <input type="hidden" id="nasc" name="nascimento" value="${esc(valor || '')}">
+  </div>`;
+}
+// Mantém o campo oculto em AAAA-MM-DD, ajusta os dias do mês (fev., meses de 30 dias, bissexto) e só preenche com data completa e real.
+function bindNascimento(root) {
+  const d = root.querySelector('#nasc-d'), m = root.querySelector('#nasc-m'), a = root.querySelector('#nasc-a'), h = root.querySelector('#nasc');
+  if (!d || !m || !a || !h) return;
+  const atualizar = () => {
+    const mes = Number(m.value), ano = Number(a.value);
+    if (mes) { // limita os dias ao mês escolhido
+      const max = new Date(ano || 2000, mes, 0).getDate();
+      [...d.options].forEach((o) => { if (o.value) o.hidden = o.disabled = Number(o.value) > max; });
+      if (Number(d.value) > max) d.value = String(max);
+    }
+    h.value = d.value && m.value && a.value ? `${a.value}-${String(m.value).padStart(2, '0')}-${String(d.value).padStart(2, '0')}` : '';
+    root.querySelectorAll('.dn select.err').forEach((x) => x.classList.remove('err'));
+  };
+  [d, m, a].forEach((s) => s.addEventListener('change', atualizar));
+  atualizar();
+}
+
 const optsUF = (sel) => `<option value="">UF</option>${UFS.map((u) => `<option ${u === sel ? 'selected' : ''}>${u}</option>`).join('')}`;
 T.dados = () => {
   const d = { ...S.contato, ...sensivel, ...rascunhoDados };
@@ -182,7 +216,7 @@ T.dados = () => {
       </div>
       <div class="field"><label for="renda">Qual é a sua renda mensal?</label><input id="renda" name="renda_mensal" data-mask="moeda" inputmode="numeric" placeholder="R$ 0" autocomplete="off" value="${esc(mask.moeda(d.renda_mensal))}"></div>
       <div class="field"><label for="cpf">CPF</label><input id="cpf" name="cpf" data-mask="cpf" inputmode="numeric" placeholder="000.000.000-00" value="${esc(mask.cpf(d.cpf))}"></div>
-      <div class="field"><label for="nasc">Data de nascimento</label><input id="nasc" name="nascimento" type="date" autocomplete="bday" value="${esc(d.nascimento)}"></div>
+      <div class="field"><label id="nasc-rotulo">Data de nascimento</label>${camposNascimento(d.nascimento)}</div>
       <div class="field"><label for="mae">Nome da mãe</label><input id="mae" name="nome_mae" value="${esc(d.nome_mae)}"></div>
       <p class="note">Seus dados serão utilizados para preparar sua simulação e, caso você solicite atendimento, para que um especialista possa entrar em contato.</p>
       <button class="btn" type="submit">CONTINUAR</button>
@@ -365,7 +399,7 @@ A.entender = async (el) => {
 
 // ---- formulários ----
 function lerForm(form) { return Object.fromEntries(new FormData(form).entries()); }
-function marcarErro(form, nomes) { form.querySelectorAll('.err').forEach((e) => e.classList.remove('err')); nomes.forEach((n) => form.elements[n]?.classList.add('err')); form.elements[nomes[0]]?.focus(); }
+function marcarErro(form, nomes) { form.querySelectorAll('.err').forEach((e) => e.classList.remove('err')); nomes.forEach((n) => { if (n === 'nascimento') form.querySelectorAll('.dn select').forEach((x) => x.classList.add('err')); else form.elements[n]?.classList.add('err'); }); (nomes[0] === 'nascimento' ? form.querySelector('#nasc-d') : form.elements[nomes[0]])?.focus(); }
 
 async function enviarCheckout(form) {
   const d = lerForm(form);
@@ -629,6 +663,7 @@ function render() {
   renderProgress();
   $app.innerHTML = T[S.tela]();
   bindMasks($app);
+  bindNascimento($app);
   if (S.tela === 'pagamento') montarPagamento();
   if (S.tela === 'processando') processar();
 }
