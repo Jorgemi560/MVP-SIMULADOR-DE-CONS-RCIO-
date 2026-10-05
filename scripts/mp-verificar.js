@@ -3,13 +3,14 @@
 // Usa as mesmas variáveis do Render (MP_ACCESS_TOKEN, PUBLIC_URL, MP_WEBHOOK_SECRET). Nunca imprime o token.
 const path = require('node:path');
 try { process.loadEnvFile?.(path.join(__dirname, '..', '.env')); } catch { /* .env é opcional */ }
-const token = process.env.MP_ACCESS_TOKEN || '';
+const { normalizarToken, tokenProblemaDe } = require('../lib/payment');
+const token = normalizarToken(process.env.MP_ACCESS_TOKEN);
 const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
 (async () => {
   let falhou = false;
   const ok = (m) => console.log(`✓ ${m}`), ruim = (m) => { falhou = true; console.error(`✗ ${m}`); }, aviso = (m) => console.log(`⚠ ${m}`);
   if ((process.env.PAYMENT_PROVIDER || '').toLowerCase() !== 'mercadopago') aviso('PAYMENT_PROVIDER não é "mercadopago" neste ambiente (o site continua no Pix estático).');
-  if (!token) return ruim('MP_ACCESS_TOKEN não definido.') || process.exit(1);
+  if (tokenProblemaDe(token)) { ruim(tokenProblemaDe(token)); process.exit(1); }
   if (token.startsWith('TEST-')) ruim('O token é de TESTE (TEST-…): pagamentos reais não serão reconhecidos. Use o token de PRODUÇÃO (APP_USR-…).');
   else if (token.startsWith('APP_USR-')) ok('Token de produção (APP_USR-…).');
   else aviso('Formato de token não reconhecido (esperado APP_USR-… em produção).');

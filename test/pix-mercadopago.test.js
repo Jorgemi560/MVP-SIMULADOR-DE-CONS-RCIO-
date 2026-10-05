@@ -2,7 +2,7 @@
 // Mercado Pago (API simulada, nenhuma chamada real): validade enviada ao provedor, expiração detectada e pagamento de última hora não perdido.
 process.env.ADMIN_PASSWORD = 'segredo-teste';
 process.env.PAYMENT_PROVIDER = 'mercadopago';
-process.env.MP_ACCESS_TOKEN = 'TEST-token-falso';
+process.env.MP_ACCESS_TOKEN = 'TEST-token-falso-de-teste-1234567890';
 process.env.TRUST_PROXY_HOPS = '1';
 process.env.MP_WEBHOOK_SECRET = 'segredo-webhook-mp-teste';
 process.env.PUBLIC_URL = 'https://exemplo.test';
@@ -263,4 +263,11 @@ test('tentativas que falharam ao criar no provedor não consomem o limite de cob
   for (let i = 0; i < 12; i++) await db.exec("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, status) VALUES (?, 'mercadopago', 500, 'cancelado')", [lead.id]); // 12 falhas sem provedor_id
   const ok = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.8.8.${++ip}` }, body: contato });
   assert.equal(ok.status, 200); assert.ok(ok.data.pix.copiaECola);
+});
+
+test('o cabeçalho Authorization enviado ao Mercado Pago é "Bearer <token>" com o valor da variável (nunca em branco)', async () => {
+  const f = global.fetch; let auth = null;
+  global.fetch = async (url, opts = {}) => { if (opts.method === 'POST' && String(url).includes('mercadopago')) auth = opts.headers.Authorization; return f(url, opts); };
+  try { await cliente(); } finally { global.fetch = f; }
+  assert.equal(auth, 'Bearer TEST-token-falso-de-teste-1234567890');
 });

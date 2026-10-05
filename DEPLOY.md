@@ -205,3 +205,6 @@ Causas mais comuns (e o que fazer):
 | 400 citando `payer` / e-mail | E-mail inválido ou igual ao do vendedor | Teste com outro e-mail |
 | `MP-rede` | Sem comunicação com o Mercado Pago | Costuma ser passageiro |
 `PIX_CHAVE` **não é usada** com Mercado Pago (só no Pix estático): o aviso de "chave normalizada" é inofensivo nesse modo.
+
+### Erro 401 "authorization value not present"
+Significa que o Mercado Pago recebeu `Authorization: Bearer` **sem token**: a variável `MP_ACCESS_TOKEN` está em branco (só espaço ou quebra de linha) no Render. O sistema agora normaliza o valor (tira espaços, aspas e "Bearer " colado) e, se não sobrar um token utilizável, **não chama o Mercado Pago**: o checkout fica indisponível e o `/admin` mostra "Mercado Pago sem token utilizável" com o motivo. Solução: Render → Environment → `MP_ACCESS_TOKEN` → apague o valor, cole só o token `APP_USR-…` → Save Changes.
