@@ -187,3 +187,8 @@ body.is-home main{max-width:none;padding:0}
 .aviso-reduzida p{margin:0;color:var(--ink);font-size:1rem;line-height:1.45}
 .result .btn.alterar{margin-top:16px;background:transparent;color:#fff;border:2px solid rgba(255,255,255,.75);box-shadow:none}
 .result .btn.alterar:hover{background:rgba(255,255,255,.12)}
+
+/* "← Voltar" padronizado: sempre no topo e à esquerda, também nas telas centralizadas */
+.screen.center .left{text-align:left}
+.back{display:inline-block;padding:6px 2px;min-height:36px}
+.back[hidden]{display:none}

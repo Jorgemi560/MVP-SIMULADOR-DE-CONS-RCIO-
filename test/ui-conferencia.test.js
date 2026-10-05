@@ -173,3 +173,13 @@ test('rede cai ao clicar em "já fiz": a tela de verificação continua e o avis
   await tela1(p);
   await ctx.close();
 });
+
+test('Voltar do Pix: visível com o Pix pendente e ESCONDIDO em conferência (evita inconsistência de pagamento)', opt, async () => {
+  const { ctx, p } = await iniciar();
+  assert.equal(await p.locator('#pay-back:visible').count(), 1);
+  await p.click('#btn-paguei'); await tela1(p);
+  assert.equal(await p.locator('#pay-back:visible').count(), 0);
+  await p.clock.fastForward(181 * 1000); await tela2(p);
+  assert.equal(await p.locator('#pay-back:visible').count(), 0);
+  await ctx.close();
+});

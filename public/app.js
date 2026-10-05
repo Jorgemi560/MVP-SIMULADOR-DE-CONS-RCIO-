@@ -27,6 +27,7 @@ const KEY = 'sc_state_v1';
 let S = { tela: 'home', lead: null, tipo: null, credito: null, capacidade: null, parcela: null, resultado: null, contato: {} };
 try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { /* ignora */ }
 let sensivel = {}; // somente memória
+let rascunhoDados = {}; // o que foi digitado em "Dados" e ainda não enviado (somente memória); só preenche o formulário ao voltar
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* ignora */ } };
 const reset = () => { try { localStorage.removeItem(KEY); } catch { /* ignora */ } S = { tela: 'home', lead: null, tipo: null, credito: null, capacidade: null, parcela: null, resultado: null, contato: {} }; sensivel = {}; };
 
@@ -121,6 +122,7 @@ T.checkout = () => `
     <button class="back" data-act="home">← Voltar</button>
     <h2>Quase lá! Seus dados de contato</h2>
     <p class="sub" style="margin-top:4px">Para liberar sua simulação, finalize o pagamento de <b>${PRECO_TXT}</b> via Pix.</p>
+    ${S.lead ? '<p class="note" style="margin-top:8px">Confira ou corrija seus dados. Seu Pix continua o mesmo: nenhuma nova cobrança é criada.</p>' : ''}
     <form class="card" id="f-checkout" novalidate>
       <div class="field"><label for="nome">Nome completo</label><input id="nome" name="nome" autocomplete="name" value="${esc(S.contato.nome)}" required></div>
       <div class="field"><label for="tel">Telefone / WhatsApp</label><input id="tel" name="telefone" type="tel" data-mask="tel" inputmode="tel" autocomplete="tel-national" placeholder="(00) 00000-0000" maxlength="15" value="${esc(mask.tel(S.contato.telefone))}" required></div>
@@ -133,6 +135,7 @@ T.checkout = () => `
 
 T.pagamento = () => `
   <section class="screen center">
+    <div class="left"><button class="back" data-act="pag-volta" id="pay-back" hidden>← Voltar</button></div>
     <h2>Pague ${PRECO_TXT} para liberar sua simulação</h2>
     <div class="card" id="pay-box"><p class="loading">Gerando pagamento…</p></div>
     <p class="hint">Assim que o pagamento for confirmado, sua simulação é liberada automaticamente.</p>
@@ -140,6 +143,7 @@ T.pagamento = () => `
 
 T.tipo = () => `
   <section class="screen">
+    ${S.refazendo ? '<button class="back" data-act="tipo-cancela">← Voltar</button>' : ''}
     <h2>O que você pretende adquirir?</h2>
     <p class="sub" style="margin-top:4px">Toque em uma opção.</p>
     <div class="grid">
@@ -150,6 +154,7 @@ T.tipo = () => `
 T.credito = () => `
   <section class="screen">
     <button class="back" data-act="tipo-volta">← Voltar</button>
+    ${S.refazendo ? '<button class="linklike" data-act="trocar-tipo" style="margin:0 0 6px">Trocar imóvel / veículo</button>' : ''}
     <h2>Qual valor de crédito você procura?</h2>
     <div class="grid two" style="margin-top:16px">
       ${CREDITOS[S.tipo].map((v) => `<button class="choice chip" data-act="credito" data-v="${v}">${brl(v).replace(',00', '')}</button>`).join('')}
@@ -163,7 +168,7 @@ T.credito = () => `
 
 const optsUF = (sel) => `<option value="">UF</option>${UFS.map((u) => `<option ${u === sel ? 'selected' : ''}>${u}</option>`).join('')}`;
 T.dados = () => {
-  const d = { ...S.contato, ...sensivel };
+  const d = { ...S.contato, ...sensivel, ...rascunhoDados };
   return `
   <section class="screen">
     <button class="back" data-act="credito-volta">← Voltar</button>
@@ -203,6 +208,7 @@ T.capacidade = () => `
 
 T.parcela = () => `
   <section class="screen">
+    <button class="back" data-act="cap-volta">← Voltar</button>
     <h2>Como você gostaria de visualizar sua simulação?</h2>
     <div class="grid" style="margin-top:16px">
       <button class="choice int" data-act="parcela" data-v="integral"><span class="em">🔵</span><span>PARCELA INTEGRAL<small>Parcela normal do plano, sem redução.</small></span></button>
@@ -214,6 +220,7 @@ T.parcela = () => `
 // Parcela reduzida: confirmação curta antes de seguir (não calcula nem informa parcela pós-contemplação).
 T['parcela-aviso'] = () => `
   <section class="screen">
+    <button class="back" data-act="parcela-volta">← Voltar</button>
     <div class="card aviso-reduzida" role="alertdialog" aria-labelledby="av-t">
       <h2 id="av-t">⚠️ Atenção</h2>
       <p>A parcela reduzida é válida somente até a contemplação. Após a contemplação, a parcela será recalculada conforme as condições do plano e o prazo restante.</p>
@@ -270,6 +277,7 @@ T.resultado = () => {
 
 T.sim = () => `
   <section class="screen center">
+    <div class="left"><button class="back" data-act="resultado-volta">← Voltar</button></div>
     <div class="party" style="font-size:3rem">🤝</div>
     <h2>Perfeito! Vamos colocar você em contato com um especialista para verificar as opções disponíveis para o seu perfil.</h2>
     <div style="margin-top:22px">
@@ -280,6 +288,7 @@ T.sim = () => `
 
 T.nao = () => `
   <section class="screen center">
+    <div class="left"><button class="back" data-act="resultado-volta">← Voltar</button></div>
     <h2>Sem problema. Antes de decidir, você pode entender melhor como funciona o consórcio.</h2>
     <div style="margin-top:22px">
       <button class="btn blue" data-act="entender">QUERO ENTENDER MELHOR</button>
@@ -290,14 +299,29 @@ T.nao = () => `
 // ---- ações ----
 const A = {};
 A.comecar = () => go(S.lead ? 'pagamento' : 'checkout');
-A.home = () => go('home');
+// "Voltar" não apaga o que o cliente já digitou: guarda o rascunho do formulário aberto (sem validar) antes de sair da tela.
+function guardarRascunho() {
+  const f = document.getElementById('f-dados') || document.getElementById('f-checkout'); if (!f) return;
+  const d = lerForm(f);
+  const t = { nome: String(d.nome ?? '').trim(), telefone: digits(d.telefone), email: String(d.email ?? '').trim() };
+  S.contato = { ...S.contato, ...t };
+  if (f.id === 'f-dados') rascunhoDados = { ...d, telefone: t.telefone };
+  save();
+}
+A.home = () => { guardarRascunho(); go('home'); };
 // Alterar simulação: volta ao crédito (pode trocar o tipo pelo "Voltar") e refaz crédito/valor mensal/parcela na MESMA sessão.
 // O pagamento confirmado e os dados já informados (guardados em memória) são mantidos: nada é cobrado de novo.
 A.alterar = () => { S.refazendo = true; S.parcela = null; S.capacidade = null; go('credito'); };
 const depoisDoCredito = () => go(S.refazendo && sensivel.cpf ? 'capacidade' : 'dados');
 A.tipo = (el) => { S.tipo = el.dataset.v; S.credito = null; go('credito'); };
-A['tipo-volta'] = () => go('tipo');
-A['credito-volta'] = () => go('credito');
+// Voltar do crédito: fluxo normal -> tipo; em "Alterar simulação" -> cancela a alteração e volta ao resultado (restaura o tipo dele).
+A['tipo-volta'] = () => { if (S.refazendo && S.resultado) { S.tipo = S.resultado.tipo; S.refazendo = false; return go('resultado'); } go('tipo'); };
+A['trocar-tipo'] = () => go('tipo');
+A['tipo-cancela'] = () => go('credito'); // em "Alterar simulação", o Voltar do tipo retorna ao crédito
+A['cap-volta'] = () => go('capacidade');
+A['resultado-volta'] = () => go('resultado');
+A['pag-volta'] = () => go('checkout'); // só aparece com o Pix pendente/expirado; não cria cobrança (o Pix atual segue valendo)
+A['credito-volta'] = () => { guardarRascunho(); go('credito'); };
 A.dados = () => go(S.refazendo && sensivel.cpf ? 'credito' : 'dados'); // "Voltar" da tela de valor mensal
 A.credito = (el) => { S.credito = Number(el.dataset.v); depoisDoCredito(); };
 A['credito-outro'] = () => {
@@ -350,6 +374,10 @@ async function enviarCheckout(form) {
   const btn = form.querySelector('button[type=submit]');
   await busy(btn, async () => {
     try {
+      if (S.lead) { // voltou do Pix para rever os dados: atualiza o MESMO cadastro (sem novo Pix nem nova cobrança)
+        try { await api(`/api/lead/${S.lead.id}/contato`, { method: 'POST', body: S.contato }); return go('pagamento'); }
+        catch (e) { if (e.status !== 404) throw e; S.lead = null; S.pix = null; S.conf = null; } // cadastro antigo não existe mais: segue como novo
+      }
       const r = await api('/api/checkout', { method: 'POST', body: S.contato });
       S.lead = { id: r.leadId, token: r.token }; S.pix = r.pix; S.mock = r.mock;
       go('pagamento');
@@ -372,7 +400,7 @@ function enviarDados(form) {
   if (d.cidade.trim().length < 2) erros.push('cidade');
   if (!(d.renda_mensal > 0)) erros.push('renda_mensal');
   if (!d.estado) erros.push('estado');
-  sensivel = d;
+  sensivel = d; rascunhoDados = {};
   if (erros.length) { marcarErro(form, erros); return setMsg(form, 'Confira os campos destacados.'); }
   S.contato = { nome: d.nome.trim(), telefone: d.telefone, email: d.email.trim() };
   go('capacidade');
@@ -450,6 +478,8 @@ async function montarPagamento() {
   // Redesenha só quando a visão muda (sem piscar). Chamado a cada segundo pelo relógio local e a cada resposta.
   const desenhar = () => {
     const v = visao();
+    // "Voltar" só com o Pix pendente/expirado: em conferência ou depois de pago, voltar poderia gerar inconsistência de pagamento.
+    const vb = document.getElementById('pay-back'); if (vb) vb.hidden = !['pendente', 'renovar'].includes(v);
     const k = `${v}|${ultimo?.pagamento || ''}|${ultimo?.pix?.copiaECola || ''}|${v === 'carregando' && semRede}`;
     if (k === chave) return;
     chave = k;
@@ -594,7 +624,7 @@ function render() {
   if (['capacidade', 'parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !sensivel.cpf) S.tela = 'dados';
   if (['parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !S.capacidade) S.tela = 'capacidade';
   if (['resultado', 'sim', 'nao'].includes(S.tela) && !S.resultado) S.tela = 'tipo';
-  if (S.tela === 'tipo' && S.resultado) S.resultado = null;
+  if (S.tela === 'tipo' && S.resultado && !S.refazendo) S.resultado = null;
 
   renderProgress();
   $app.innerHTML = T[S.tela]();

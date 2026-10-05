@@ -144,3 +144,72 @@ test('Alterar simulação: "Voltar" da tela de valor mensal leva ao crédito e a
   assert.equal(await p.locator('[data-act=mock]').count(), 0); // não pede pagamento
   await ctx.close();
 });
+
+// ---------- "← Voltar" padronizado ----------
+const temVoltar = (p) => p.locator('main .back:visible').count();
+
+test('Voltar do Pix: rever/corrigir os dados volta ao MESMO Pix, sem nova cobrança', opt, async () => {
+  const email = `pixvolta${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await p.click('[data-act=comecar]', { force: true });
+  await p.fill('#nome', 'Cliente Voltar'); await p.fill('#tel', '41987651414'); await p.fill('#email', email);
+  await p.click('button[type=submit]');
+  await p.waitForSelector('[data-act=mock]');
+  assert.equal(await p.locator('#pay-back:visible').count(), 1);          // Pix pendente: pode voltar
+  await p.click('#pay-back');
+  await p.waitForSelector('#f-checkout');
+  assert.equal(await p.inputValue('#nome'), 'Cliente Voltar');             // nada foi apagado
+  assert.equal(await p.inputValue('#email'), email);
+  assert.match(await texto(p), /nenhuma nova cobrança é criada/i);
+  await p.fill('#nome', 'Cliente Voltar Corrigido'); await p.click('button[type=submit]');
+  await p.waitForSelector('[data-act=mock]');                              // de volta à tela do Pix
+  const lead = await db.um('SELECT id, nome FROM leads WHERE email = ?', [email]);
+  assert.equal(lead.nome, 'Cliente Voltar Corrigido');
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM leads WHERE email = ?', [email])).n, 1);
+  assert.deepEqual((await db.todos('SELECT status FROM pagamentos WHERE lead_id = ?', [lead.id])).map((x) => x.status), ['pendente']);
+  // e ainda dá para voltar até o início
+  await p.click('#pay-back'); await p.waitForSelector('#f-checkout'); await p.click('.back'); await p.waitForSelector('[data-act=comecar]');
+  await ctx.close();
+});
+
+test('Voltar em todas as etapas do fluxo (sem apagar o que foi preenchido) e nenhum Voltar onde não é seguro', opt, async () => {
+  const email = `voltas${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateOCredito(p, email);
+  assert.equal(await temVoltar(p), 1);                                       // crédito: tem
+  await p.click('.back'); await p.waitForSelector('[data-act=tipo]');         // crédito -> tipo
+  assert.equal(await temVoltar(p), 0);                                       // tipo (já pago): sem Voltar
+  await p.click('[data-act=tipo][data-v=imovel]'); await p.click('[data-act=credito][data-v="100000"]');
+  await p.waitForSelector('#f-dados'); assert.equal(await temVoltar(p), 1);
+  await p.fill('#cidade', 'Campo Belo'); await p.selectOption('#uf', 'MG'); await p.fill('#renda', '8000');
+  await p.fill('#cpf', '52998224725'); await p.fill('#nasc', '1988-03-10'); await p.fill('#mae', 'Maria da Silva');
+  await p.click('.back'); await p.waitForSelector('[data-act=credito]');      // dados -> crédito
+  await p.click('[data-act=credito][data-v="100000"]'); await p.waitForSelector('#f-dados');
+  assert.equal(await p.inputValue('#cidade'), 'Campo Belo');                  // dados preservados
+  assert.equal(await p.inputValue('#cpf'), '529.982.247-25');
+  await p.click('#f-dados button[type=submit]'); await p.waitForSelector('[data-act=cap]');
+  await p.click('.back'); await p.waitForSelector('#f-dados');                // capacidade -> dados
+  await p.click('#f-dados button[type=submit]'); await p.waitForSelector('[data-act=cap]');
+  await p.click('[data-act=cap]:first-of-type'); await p.waitForSelector('[data-act=parcela]');
+  assert.equal(await temVoltar(p), 1);
+  await p.click('.back'); await p.waitForSelector('[data-act=cap]');          // parcela -> capacidade
+  await p.click('[data-act=cap]:first-of-type'); await p.click('[data-act=parcela][data-v=reduzida]');
+  await p.waitForSelector('[data-act=parcela-confirma]');
+  await p.click('.back'); await p.waitForSelector('[data-act=parcela][data-v=integral]'); // aviso -> parcela
+  await p.click('[data-act=parcela][data-v=integral]');
+  await p.waitForSelector('#btn-alterar', { timeout: 20000 });
+  assert.equal(await temVoltar(p), 0);                                       // resultado: usa "Alterar simulação"
+  // Voltar e Alterar simulação são coisas diferentes:
+  await p.click('#btn-alterar'); await p.waitForSelector('[data-act=credito]');
+  await p.click('.back'); await p.waitForSelector('#btn-alterar');            // cancelar a alteração volta ao mesmo resultado
+  assert.match(await texto(p), /R\$\s?100\.000/);
+  await p.click('#btn-alterar'); await p.click('[data-act=trocar-tipo]'); await p.waitForSelector('[data-act=tipo]');
+  assert.equal(await temVoltar(p), 1);                                       // tipo em "Alterar": volta ao crédito
+  await p.click('.back'); await p.waitForSelector('[data-act=credito]');
+  // telas pós-interesse voltam ao resultado
+  await p.click('.back'); await p.waitForSelector('[data-act=intent][data-v=agora]');
+  await p.click('[data-act=intent][data-v=agora]'); await p.waitForSelector('text=Perfeito!');
+  await p.click('.back'); await p.waitForSelector('#btn-alterar');
+  assert.deepEqual((await db.todos("SELECT p.status FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE l.email = ?", [email])).map((x) => x.status), ['pago']);
+  await ctx.close();
+});

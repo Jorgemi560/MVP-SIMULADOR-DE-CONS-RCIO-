@@ -250,3 +250,19 @@ test('"já fiz o pagamento" não libera: fica em conferência, registra o horár
   const f = (await c.estado()).data;
   assert.equal(f.pagamento, 'pago'); assert.equal(f.liberado, true);
 });
+
+test('contato (Voltar do Pix): bloqueado com pagamento em conferência ou já confirmado; permitido com Pix vencido', async () => {
+  const novoContato = { nome: 'Nome Novo Silva', telefone: '11933332222', email: 'novo@exemplo.com' };
+  const c = await novoCliente();
+  await c.vencer(); // Pix vencido: pode corrigir dados (e depois gerar novo Pix quando quiser)
+  assert.equal((await call(`/api/lead/${c.id}/contato`, { method: 'POST', headers: c.h, body: novoContato })).status, 200);
+  assert.equal((await db.um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [c.id])).n, 1); // nada novo foi criado
+  const d = await novoCliente();
+  await call(`/api/lead/${d.id}/informar-pagamento`, { method: 'POST', headers: d.h });
+  const r = await call(`/api/lead/${d.id}/contato`, { method: 'POST', headers: d.h, body: { ...novoContato, email: 'novo2@exemplo.com' } });
+  assert.equal(r.status, 409); assert.match(r.data.erro, /conferência/i);
+  const e = await novoCliente();
+  const id = (await db.um('SELECT id FROM pagamentos WHERE lead_id = ?', [e.id])).id;
+  assert.equal((await webhook(`SIM${id}`)).status, 200);
+  assert.equal((await call(`/api/lead/${e.id}/contato`, { method: 'POST', headers: e.h, body: { ...novoContato, email: 'novo3@exemplo.com' } })).status, 409);
+});

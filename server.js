@@ -340,6 +340,24 @@ route('POST', '/api/lead/:id/novo-pix', async (req, { params }) => {
   return garantirCobranca(lead, { renovar: true });
 });
 
+// "Voltar" a partir da tela do Pix: corrige nome/telefone/e-mail do MESMO cadastro. Não cria cobrança nem chama o provedor:
+// o Pix já gerado continua o mesmo. Bloqueado quando o pagamento já foi confirmado ou está em conferência.
+route('POST', '/api/lead/:id/contato', async (req, { body, params }) => {
+  limit(req, 'contato', 20, 600000);
+  const lead = await leadAutenticado(req, params.id);
+  const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
+  if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
+  if (!V.emailValido(email)) throw bad('E-mail inválido.');
+  if (!V.telefoneValido(telefone)) throw bad('Telefone inválido. Informe DDD + número.');
+  const pg = await pagamentoAtual(lead.id);
+  if (pg?.status === 'pago') throw new HttpError(409, 'O pagamento já foi confirmado.');
+  if (pg?.status === 'informado') throw new HttpError(409, 'Seu pagamento está em conferência: não é possível alterar os dados agora.');
+  const outro = await um('SELECT id FROM leads WHERE email = ? AND telefone = ? AND id <> ? AND excluido_em IS NULL LIMIT 1', [email, telefone, lead.id]);
+  if (outro) throw new HttpError(409, 'Já existe um cadastro com esse e-mail e telefone.');
+  await exec('UPDATE leads SET nome=?, email=?, telefone=? WHERE id=? AND excluido_em IS NULL', [nome, email, telefone, lead.id]);
+  return { ok: true };
+});
+
 route('POST', '/api/lead/:id/mock-pay', async (req, { params }) => {
   if (provider.nome !== 'mock') throw new HttpError(404, 'Não encontrado');
   const lead = await leadAutenticado(req, params.id);
