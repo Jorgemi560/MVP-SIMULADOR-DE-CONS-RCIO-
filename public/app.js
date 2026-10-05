@@ -325,6 +325,7 @@ T.nao = () => `
     <h2>Sem problema. Antes de decidir, você pode entender melhor como funciona o consórcio.</h2>
     <div style="margin-top:22px">
       <button class="btn blue" data-act="entender">QUERO ENTENDER MELHOR</button>
+      <button class="btn neutral" data-act="nao-obrigado">NÃO, OBRIGADO</button>
       <p class="msg" role="alert"></p>
     </div>
   </section>`;
@@ -388,12 +389,15 @@ A.intent = async (el) => {
     } catch (e) { setMsg($app, e.message); }
   });
 };
+// Landing page oficial do Guia do Consórcio. Usada quando o admin não configurou outro endereço (learn_url).
+const GUIA_URL = 'https://guia10niveis.readdy.co';
+// "Não, obrigado": só volta à Home. Não chama o servidor (nada muda no cadastro, no pagamento nem na classificação de interesse).
+A['nao-obrigado'] = () => go('home');
 A.entender = async (el) => {
   await busy(el, async () => {
     let learn = S.learn;
     try { const r = await api(`/api/lead/${S.lead.id}/interesse`, { method: 'POST', body: { interesse: 'conversar' } }); learn = r.learnUrl; } catch (e) { return setMsg($app, e.message); }
-    if (learn) window.location.href = learn;
-    else setMsg($app, 'Em breve disponibilizaremos nosso guia. Obrigado pelo interesse!');
+    window.location.href = learn || GUIA_URL;
   });
 };
 
