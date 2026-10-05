@@ -11,9 +11,8 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 const CREDITOS = {
   imovel: [80000, 100000, 150000, 200000, 300000, 400000, 500000, 700000, 1000000],
   veiculo: [30000, 40000, 50000, 60000, 80000, 100000, 150000, 200000],
-  outros: [10000, 20000, 30000, 50000, 80000, 100000, 150000, 200000],
 };
-const TIPOS = { imovel: ['🏠', 'Imóvel'], veiculo: ['🚗', 'Veículo'], outros: ['📦', 'Outros'] };
+const TIPOS = { imovel: ['🏠', 'Imóvel'], veiculo: ['🚗', 'Veículo'] }; // o MVP trabalha somente com imóvel e veículo
 const CAPACIDADES = [
   ['Até R$500', 500], ['R$500 a R$1.000', 1000], ['R$1.000 a R$1.500', 1500],
   ['R$1.500 a R$2.000', 2000], ['R$2.000 a R$3.000', 3000], ['Acima de R$3.000', 5000],
@@ -617,6 +616,7 @@ A.mock = async (el) => { await busy(el, async () => { try { await api(`/api/lead
 function render() {
   document.body.classList.toggle('is-home', S.tela === 'home');
   // Guardas de fluxo: não pular etapas após recarregar a página
+  if (S.tipo && !TIPOS[S.tipo]) { S.tipo = null; S.credito = null; } // sessão antiga guardada com um tipo que não existe mais
   const precisaLead = !['home', 'checkout'].includes(S.tela);
   if (precisaLead && !S.lead) S.tela = 'checkout';
   if (['credito', 'dados', 'capacidade', 'parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !S.tipo) S.tela = 'tipo';

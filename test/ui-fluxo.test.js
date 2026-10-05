@@ -213,3 +213,20 @@ test('Voltar em todas as etapas do fluxo (sem apagar o que foi preenchido) e nen
   assert.deepEqual((await db.todos("SELECT p.status FROM pagamentos p JOIN leads l ON l.id = p.lead_id WHERE l.email = ?", [email])).map((x) => x.status), ['pago']);
   await ctx.close();
 });
+
+test('primeira etapa: somente Imóvel e Veículo (sem "Outros")', opt, async () => {
+  const email = `tipos${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await p.click('[data-act=comecar]', { force: true });
+  await p.fill('#nome', 'Cliente Tipos'); await p.fill('#tel', '41987651616'); await p.fill('#email', email);
+  await p.click('button[type=submit]'); await p.click('[data-act=mock]');
+  await p.waitForSelector('[data-act=tipo]');
+  assert.equal(await p.locator('[data-act=tipo]').count(), 2);
+  const t = await texto(p);
+  assert.match(t, /IMÓVEL/); assert.match(t, /VEÍCULO/); assert.ok(!/outros/i.test(t));
+  // sessão antiga guardada com tipo "outros": volta para a primeira etapa em vez de quebrar
+  await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('sc_state_v1')); s.tipo = 'outros'; s.tela = 'credito'; localStorage.setItem('sc_state_v1', JSON.stringify(s)); });
+  await p.reload(); await p.waitForSelector('[data-act=tipo]');
+  assert.equal(await p.locator('[data-act=tipo]').count(), 2);
+  await ctx.close();
+});
