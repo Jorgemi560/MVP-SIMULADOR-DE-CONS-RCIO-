@@ -309,3 +309,61 @@ test('data de nascimento no iPhone (emulação de tela/toque): três seletores v
   await p.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/nascimento-iphone.png` : undefined, ...(process.env.SHOT_DIR ? {} : { type: 'png' }) });
   await ctx.close();
 });
+
+// ---------- Tela "Ainda não": segundo botão e link do guia ----------
+async function ateATelaNao(p, email) {
+  await ateOCredito(p, email, 'veiculo');
+  await p.click('[data-act=credito][data-v="50000"]');
+  await preencherDados(p);
+  await p.click('[data-act=cap]:first-of-type');
+  await p.waitForSelector('#btn-alterar', { timeout: 20000 });
+  await p.click('[data-act=intent][data-v=depois]');
+  await p.waitForSelector('[data-act=entender]');
+}
+
+test('tela "Ainda não": tudo que existia continua, mais o botão cinza "NÃO, OBRIGADO"; este volta à Home sem tocar em nada', opt, async () => {
+  const email = `nao${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateATelaNao(p, email);
+  const t = await texto(p);
+  assert.match(t, /Sem problema\. Antes de decidir, você pode entender melhor como funciona o consórcio\./);
+  assert.equal(await p.locator('main .back:visible').count(), 1);                  // ← Voltar preservado
+  assert.match(await texto(p, '[data-act=entender]'), /QUERO ENTENDER MELHOR/);
+  assert.match(await texto(p, '[data-act=nao-obrigado]'), /NÃO, OBRIGADO/);
+  // o botão cinza fica logo abaixo do azul, com aparência secundária (cor diferente) e altura confortável
+  const g = await p.evaluate(() => { const a = document.querySelector('[data-act=entender]'), b = document.querySelector('[data-act=nao-obrigado]');
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return { abaixo: rb.top >= ra.bottom, corA: getComputedStyle(a).backgroundColor, corB: getComputedStyle(b).backgroundColor, altura: Math.round(rb.height), larg: Math.round(rb.width) === Math.round(ra.width) }; });
+  assert.ok(g.abaixo && g.larg && g.altura >= 44); assert.notEqual(g.corA, g.corB);
+  const antes = await db.um('SELECT l.id, l.interesse, l.status, (SELECT COUNT(*)::int FROM pagamentos WHERE lead_id = l.id) AS pags, (SELECT COUNT(*)::int FROM leads) AS leads FROM leads l WHERE l.email = ?', [email]);
+  await p.click('[data-act=nao-obrigado]');
+  await p.waitForSelector('[data-act=comecar]');                                   // Home
+  assert.match(await texto(p), /Descubra quanto pode ficar a parcela do consórcio/i);
+  const depois = await db.um('SELECT l.id, l.interesse, l.status, (SELECT COUNT(*)::int FROM pagamentos WHERE lead_id = l.id) AS pags, (SELECT COUNT(*)::int FROM leads) AS leads FROM leads l WHERE l.email = ?', [email]);
+  assert.deepEqual(depois, antes);                                                 // nada mudou no cadastro/pagamento/interesse
+  assert.equal(depois.pags, 1);
+  await ctx.close();
+});
+
+test('tela "Ainda não": "QUERO ENTENDER MELHOR" abre o guia oficial (e o admin pode trocar o endereço)', opt, async () => {
+  const email = `guia${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  const destinos = [];
+  await p.route(/guia10niveis\.readdy\.co|exemplo\.test/, (r) => { destinos.push(r.request().url()); r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>guia</h1>' }); });
+  await ateATelaNao(p, email);
+  await p.click('[data-act=entender]');
+  await p.waitForURL(/guia10niveis\.readdy\.co/);
+  assert.match(p.url(), /^https:\/\/guia10niveis\.readdy\.co\/?$/);
+  assert.equal((await db.um('SELECT interesse FROM leads WHERE email = ?', [email])).interesse, 'conversar'); // comportamento existente preservado
+  // se o admin configurar outro endereço (learn_url), ele continua valendo
+  await db.exec("INSERT INTO config (chave, valor) VALUES ('learn_url', 'https://exemplo.test/guia') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor");
+  try {
+    const { ctx: ctx2, p: p2 } = await novaPagina(`${email}.2`);
+    await p2.route(/exemplo\.test/, (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>outro</h1>' }));
+    await ateATelaNao(p2, `${email}.2`);
+    await p2.click('[data-act=entender]');
+    await p2.waitForURL(/exemplo\.test\/guia/);
+    await ctx2.close();
+  } finally { await db.exec("DELETE FROM config WHERE chave = 'learn_url'"); }
+  await ctx.close();
+});
