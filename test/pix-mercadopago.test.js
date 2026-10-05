@@ -271,3 +271,28 @@ test('o cabeçalho Authorization enviado ao Mercado Pago é "Bearer <token>" com
   try { await cliente(); } finally { global.fetch = f; }
   assert.equal(auth, 'Bearer TEST-token-falso-de-teste-1234567890');
 });
+
+// ---------- "Voltar" da tela do Pix: corrigir contato sem nova cobrança ----------
+test('corrigir os dados de contato (Voltar do Pix) atualiza o MESMO cadastro: nenhuma nova cobrança no Mercado Pago', async () => {
+  const c = await cliente(); const antes = await db.um('SELECT id, pix_codigo FROM pagamentos WHERE lead_id = ?', [c.id]);
+  const f = global.fetch; let chamadasMp = 0;
+  global.fetch = async (url, opts = {}) => { if (String(url).includes('mercadopago') && opts.method === 'POST') chamadasMp++; return f(url, opts); }; // só criações de cobrança contam (consultar o status é leitura)
+  let r;
+  try { r = await call(`/api/lead/${c.id}/contato`, { method: 'POST', headers: c.h, body: { nome: 'Nome Corrigido Silva', telefone: '11944445555', email: 'corrigido@exemplo.com' } }); }
+  finally { global.fetch = f; }
+  assert.equal(r.status, 200); assert.equal(chamadasMp, 0);
+  const lead = await db.um('SELECT nome, email, telefone FROM leads WHERE id = ?', [c.id]);
+  assert.deepEqual([lead.nome, lead.email, lead.telefone], ['Nome Corrigido Silva', 'corrigido@exemplo.com', '11944445555']);
+  const pags = await db.todos('SELECT id, pix_codigo, status FROM pagamentos WHERE lead_id = ?', [c.id]);
+  assert.equal(pags.length, 1); assert.equal(pags[0].id, antes.id); assert.equal(pags[0].pix_codigo, antes.pix_codigo); assert.equal(pags[0].status, 'pendente');
+  assert.equal((await c.estado()).data.pix.copiaECola, antes.pix_codigo); // o mesmo Pix continua valendo
+});
+
+test('contato: valida os campos, exige o token e recusa dados que já pertencem a outro cadastro', async () => {
+  const a = await cliente(), b = await cliente();
+  const dadosB = await db.um('SELECT email, telefone FROM leads WHERE id = ?', [b.id]);
+  assert.equal((await call(`/api/lead/${a.id}/contato`, { method: 'POST', headers: a.h, body: { nome: 'Fulano de Tal', telefone: '123', email: 'x@exemplo.com' } })).status, 400);
+  assert.equal((await call(`/api/lead/${a.id}/contato`, { method: 'POST', headers: a.h, body: { nome: 'Fu', telefone: '11944445555', email: 'x@exemplo.com' } })).status, 400);
+  assert.equal((await call(`/api/lead/${a.id}/contato`, { method: 'POST', headers: { 'X-Lead-Token': 'x' }, body: { nome: 'Fulano de Tal', telefone: '11944445555', email: 'x@exemplo.com' } })).status, 404);
+  assert.equal((await call(`/api/lead/${a.id}/contato`, { method: 'POST', headers: a.h, body: { nome: 'Fulano de Tal', telefone: dadosB.telefone, email: dadosB.email } })).status, 409);
+});
