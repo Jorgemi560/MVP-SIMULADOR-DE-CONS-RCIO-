@@ -192,3 +192,8 @@ body.is-home main{max-width:none;padding:0}
 .screen.center .left{text-align:left}
 .back{display:inline-block;padding:6px 2px;min-height:36px}
 .back[hidden]{display:none}
+
+/* Data de nascimento: 3 seletores nativos lado a lado (dia curto, mês e ano) */
+.dn{display:grid;grid-template-columns:1.15fr 1.65fr 1.2fr;gap:8px}
+.dn select{padding:14px 24px 14px 11px;background-position:right 8px center;text-overflow:clip}
+select.err{border-color:var(--red)}

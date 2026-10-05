@@ -42,10 +42,13 @@ async function ateOCredito(p, email, tipo = 'imovel') {
   await p.click(`[data-act=tipo][data-v=${tipo}]`);
   await p.waitForSelector('[data-act=credito]');
 }
+async function escolherNascimento(p, dia, mes, ano) {
+  await p.selectOption('#nasc-a', String(ano)); await p.selectOption('#nasc-m', String(mes)); await p.selectOption('#nasc-d', String(dia));
+}
 async function preencherDados(p) {
   await p.waitForSelector('#f-dados');
   await p.fill('#cidade', 'Campo Belo'); await p.selectOption('#uf', 'MG'); await p.fill('#renda', '8000');
-  await p.fill('#cpf', '52998224725'); await p.fill('#nasc', '1988-03-10'); await p.fill('#mae', 'Maria da Silva');
+  await p.fill('#cpf', '52998224725'); await escolherNascimento(p, 10, 3, 1988); await p.fill('#mae', 'Maria da Silva');
   await p.click('#f-dados button[type=submit]');
 }
 
@@ -182,7 +185,7 @@ test('Voltar em todas as etapas do fluxo (sem apagar o que foi preenchido) e nen
   await p.click('[data-act=tipo][data-v=imovel]'); await p.click('[data-act=credito][data-v="100000"]');
   await p.waitForSelector('#f-dados'); assert.equal(await temVoltar(p), 1);
   await p.fill('#cidade', 'Campo Belo'); await p.selectOption('#uf', 'MG'); await p.fill('#renda', '8000');
-  await p.fill('#cpf', '52998224725'); await p.fill('#nasc', '1988-03-10'); await p.fill('#mae', 'Maria da Silva');
+  await p.fill('#cpf', '52998224725'); await escolherNascimento(p, 10, 3, 1988); await p.fill('#mae', 'Maria da Silva');
   await p.click('.back'); await p.waitForSelector('[data-act=credito]');      // dados -> crédito
   await p.click('[data-act=credito][data-v="100000"]'); await p.waitForSelector('#f-dados');
   assert.equal(await p.inputValue('#cidade'), 'Campo Belo');                  // dados preservados
@@ -228,5 +231,81 @@ test('primeira etapa: somente Imóvel e Veículo (sem "Outros")', opt, async () 
   await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('sc_state_v1')); s.tipo = 'outros'; s.tela = 'credito'; localStorage.setItem('sc_state_v1', JSON.stringify(s)); });
   await p.reload(); await p.waitForSelector('[data-act=tipo]');
   assert.equal(await p.locator('[data-act=tipo]').count(), 2);
+  await ctx.close();
+});
+
+// ---------- Data de nascimento: seletores de dia / mês / ano ----------
+async function ateOsDados(p, email) {
+  await ateOCredito(p, email);
+  await p.click('[data-act=credito][data-v="100000"]');
+  await p.waitForSelector('#f-dados');
+}
+
+test('data de nascimento: ano escolhido direto (sem navegar mês a mês), só anos de maiores de 18 e valor AAAA-MM-DD', opt, async () => {
+  const email = `nasc${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateOsDados(p, email);
+  assert.equal(await p.locator('input[type=date]').count(), 0);                 // sem o calendário mês a mês
+  const anos = await p.$$eval('#nasc-a option', (o) => o.map((x) => x.value).filter(Boolean).map(Number));
+  const atual = new Date().getFullYear();
+  assert.equal(anos[0], atual - 18); assert.equal(anos.at(-1), atual - 100);      // lista começa em (ano atual - 18): data futura/menor de 18 não aparece
+  assert.ok(!anos.includes(atual) && !anos.includes(atual - 17));
+  await p.selectOption('#nasc-a', '1979');                                        // UMA seleção leva a 1979
+  await p.selectOption('#nasc-m', '5'); await p.selectOption('#nasc-d', '20');
+  assert.equal(await p.inputValue('#nasc'), '1979-05-20');
+  assert.equal(await p.locator('#nasc-m option:checked').innerText(), 'Maio');
+  await ctx.close();
+});
+
+test('data de nascimento: dias se ajustam ao mês/ano (fev., bissexto, 30 dias) e nunca formam data inexistente', opt, async () => {
+  const email = `dias${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateOsDados(p, email);
+  await p.selectOption('#nasc-d', '31'); await p.selectOption('#nasc-m', '2'); await p.selectOption('#nasc-a', '2000');
+  assert.equal(await p.inputValue('#nasc'), '2000-02-29');                        // bissexto
+  await p.selectOption('#nasc-a', '1999');
+  assert.equal(await p.inputValue('#nasc'), '1999-02-28');
+  await p.selectOption('#nasc-d', '28'); await p.selectOption('#nasc-m', '4');
+  assert.equal(await p.locator('#nasc-d option:not([hidden]):not([disabled])').count(), 31); // vazio + 1..30
+  assert.equal(await p.inputValue('#nasc'), '1999-04-28');
+  await p.selectOption('#nasc-d', ''); // data incompleta => campo oculto vazio
+  assert.equal(await p.inputValue('#nasc'), '');
+  await ctx.close();
+});
+
+test('data de nascimento: incompleta é recusada com os seletores destacados; completa segue; Voltar preserva a escolha', opt, async () => {
+  const email = `inc${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateOsDados(p, email);
+  await p.fill('#cidade', 'Campo Belo'); await p.selectOption('#uf', 'MG'); await p.fill('#renda', '8000'); await p.fill('#cpf', '52998224725'); await p.fill('#mae', 'Maria da Silva');
+  await p.selectOption('#nasc-a', '1979');                                        // só o ano
+  await p.click('#f-dados button[type=submit]');
+  assert.equal(await p.locator('#f-dados').count(), 1);                           // não avançou
+  assert.equal(await p.locator('.dn select.err').count(), 3);
+  await p.selectOption('#nasc-m', '5'); await p.selectOption('#nasc-d', '20');
+  assert.equal(await p.locator('.dn select.err').count(), 0);
+  await p.click('.back'); await p.waitForSelector('[data-act=credito]');          // Voltar não apaga o que foi escolhido
+  await p.click('[data-act=credito][data-v="100000"]'); await p.waitForSelector('#f-dados');
+  assert.deepEqual([await p.inputValue('#nasc-d'), await p.inputValue('#nasc-m'), await p.inputValue('#nasc-a')], ['20', '5', '1979']);
+  await p.click('#f-dados button[type=submit]');
+  await p.waitForSelector('[data-act=cap]');                                       // seguiu o fluxo normal
+  const lead = await db.um('SELECT nascimento FROM leads WHERE email = ?', [email]);
+  assert.ok(lead); // (nascimento só é gravado na simulação; o fluxo continua normal)
+  await ctx.close();
+});
+
+test('data de nascimento no iPhone (emulação de tela/toque): três seletores visíveis, sem rolagem lateral e com área de toque confortável', opt, async () => {
+  const email = `iph${Date.now()}@teste.com`;
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 667 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+    extraHTTPHeaders: { 'X-Forwarded-For': `10.5.9.${Math.floor(Math.random() * 200) + 1}` } });
+  const p = await ctx.newPage(); await p.goto(`${base}/`);
+  await ateOsDados(p, email);
+  await p.locator('.dn').scrollIntoViewIfNeeded();
+  const m = await p.evaluate(() => ({ larg: document.documentElement.scrollWidth, tela: window.innerWidth, alturas: [...document.querySelectorAll('.dn select')].map((s) => Math.round(s.getBoundingClientRect().height)), larguras: [...document.querySelectorAll('.dn select')].map((s) => Math.round(s.getBoundingClientRect().width)) }));
+  assert.ok(m.larg <= m.tela, `rolagem lateral: ${m.larg} > ${m.tela}`);
+  assert.ok(m.alturas.every((h) => h >= 44), `altura do toque: ${m.alturas}`);
+  assert.ok(m.larguras.every((w) => w >= 70), `largura mínima: ${m.larguras}`);
+  await p.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/nascimento-iphone.png` : undefined, ...(process.env.SHOT_DIR ? {} : { type: 'png' }) });
   await ctx.close();
 });
