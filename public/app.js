@@ -19,7 +19,7 @@ const CAPACIDADES = [
   ['R$1.500 a R$2.000', 2000], ['R$2.000 a R$3.000', 3000], ['Acima de R$3.000', 5000],
 ];
 const ETAPAS = ['Objetivo', 'Crédito', 'Seus dados', 'Simulação', 'Resultado'];
-const ETAPA_DA_TELA = { tipo: 1, credito: 2, dados: 3, capacidade: 3, parcela: 3, processando: 4, resultado: 5, sim: 5, nao: 5 };
+const ETAPA_DA_TELA = { tipo: 1, credito: 2, dados: 3, capacidade: 3, parcela: 3, 'parcela-aviso': 3, processando: 4, resultado: 5, sim: 5, nao: 5 };
 const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 
 // Estado persistido (sem dados sensíveis como CPF/nome da mãe)
@@ -95,6 +95,16 @@ T.home = () => `
           <button class="btn cta" data-act="comecar"><span>FAZER MINHA SIMULAÇÃO POR ${PRECO_TXT}</span><i>${ICONES.seta}</i></button>
           <p class="offer-note"><span>${ICONES.relogio} Leva menos de 2 minutos</span><span>${ICONES.cadeado} Pagamento seguro por Pix</span></p>
         </div>
+      </div>
+    </div>
+    <div class="contemp">
+      <div class="contemp-in">
+        <h2>Como você pode ser contemplado?</h2>
+        <p class="contemp-via">🎟️ Por <b>sorteio</b> pela Loteria Federal <span>ou</span> 💰 por <b>lance</b>.</p>
+        <ul class="contemp-lances" aria-label="Tipos de lance">
+          <li>Lance Livre</li><li>Lance Fixo <small>(Embutido)</small></li><li>Lance Limitado</li>
+        </ul>
+        <p class="contemp-nota">A contemplação não possui data garantida.</p>
       </div>
     </div>
     <div class="how">
@@ -195,10 +205,23 @@ T.parcela = () => `
   <section class="screen">
     <h2>Como você gostaria de visualizar sua simulação?</h2>
     <div class="grid" style="margin-top:16px">
-      <button class="choice int" data-act="parcela" data-v="integral"><span class="em">🔵</span><span>PARCELA INTEGRAL<small>Valor completo do plano</small></span></button>
-      <button class="choice red" data-act="parcela" data-v="reduzida"><span class="em">🟢</span><span>PARCELA REDUZIDA<small>Parcela menor até a contemplação, conforme regra do plano</small></span></button>
+      <button class="choice int" data-act="parcela" data-v="integral"><span class="em">🔵</span><span>PARCELA INTEGRAL<small>Parcela normal do plano, sem redução.</small></span></button>
+      <button class="choice red" data-act="parcela" data-v="reduzida"><span class="em">🟢</span><span>PARCELA REDUZIDA<small>Menor parcela mensal até a contemplação.</small></span></button>
     </div>
     <p class="msg" role="alert"></p>
+  </section>`;
+
+// Parcela reduzida: confirmação curta antes de seguir (não calcula nem informa parcela pós-contemplação).
+T['parcela-aviso'] = () => `
+  <section class="screen">
+    <div class="card aviso-reduzida" role="alertdialog" aria-labelledby="av-t">
+      <h2 id="av-t">⚠️ Atenção</h2>
+      <p>A parcela reduzida é válida somente até a contemplação. Após a contemplação, a parcela será recalculada conforme as condições do plano e o prazo restante.</p>
+      <div class="grid" style="margin-top:16px">
+        <button class="btn" data-act="parcela-confirma">CONTINUAR COM PARCELA REDUZIDA</button>
+        <button class="btn ghost" data-act="parcela-volta">VOLTAR PARA PARCELA INTEGRAL</button>
+      </div>
+    </div>
   </section>`;
 
 const PASSOS = ['Analisando valor desejado', 'Calculando cenário de parcela', 'Verificando informações fornecidas', 'Preparando seu resultado'];
@@ -226,6 +249,8 @@ T.resultado = () => {
         <div class="kv"><span>Prazo</span><b>${r.prazo} meses</b></div>
       ` : `<div class="big"><strong style="font-size:1.2rem">Para este valor, um especialista vai preparar a simulação sob medida.</strong></div>`}
       <p class="fine">Os valores apresentados são estimativos e podem variar conforme o plano, grupo e condições vigentes${r.indice ? `, além do reajuste pelo ${esc(r.indice)}` : ''}. A proposta definitiva será apresentada por um especialista. Esta simulação não representa aprovação de crédito nem garantia de contemplação.</p>
+      <button class="btn ghost alterar" data-act="alterar" id="btn-alterar">← ALTERAR SIMULAÇÃO</button>
+      <p class="fine" style="margin-top:6px">Quer testar outro valor? Sem nova cobrança.</p>
     </div>
     <div class="qual center">
       <h2>Parabéns!</h2>
@@ -266,15 +291,19 @@ T.nao = () => `
 const A = {};
 A.comecar = () => go(S.lead ? 'pagamento' : 'checkout');
 A.home = () => go('home');
+// Alterar simulação: volta ao crédito (pode trocar o tipo pelo "Voltar") e refaz crédito/valor mensal/parcela na MESMA sessão.
+// O pagamento confirmado e os dados já informados (guardados em memória) são mantidos: nada é cobrado de novo.
+A.alterar = () => { S.refazendo = true; S.parcela = null; S.capacidade = null; go('credito'); };
+const depoisDoCredito = () => go(S.refazendo && sensivel.cpf ? 'capacidade' : 'dados');
 A.tipo = (el) => { S.tipo = el.dataset.v; S.credito = null; go('credito'); };
 A['tipo-volta'] = () => go('tipo');
 A['credito-volta'] = () => go('credito');
-A.dados = () => go('dados');
-A.credito = (el) => { S.credito = Number(el.dataset.v); go('dados'); };
+A.dados = () => go(S.refazendo && sensivel.cpf ? 'credito' : 'dados'); // "Voltar" da tela de valor mensal
+A.credito = (el) => { S.credito = Number(el.dataset.v); depoisDoCredito(); };
 A['credito-outro'] = () => {
   const v = Number(digits($app.querySelector('#outro').value));
   if (!(v >= 1000)) return setMsg($app, 'Informe um valor a partir de R$ 1.000.');
-  S.credito = v; go('dados');
+  S.credito = v; depoisDoCredito();
 };
 A.cap = (el) => { S.capacidade = { label: el.dataset.l, valor: Number(el.dataset.v) }; return escolherParcela(); };
 A['cap-outro'] = () => {
@@ -289,7 +318,9 @@ async function escolherParcela() {
   } catch { /* sem info: segue com integral */ }
   S.parcela = 'integral'; go('processando');
 }
-A.parcela = (el) => { S.parcela = el.dataset.v; go('processando'); };
+A.parcela = (el) => { S.parcela = el.dataset.v; go(S.parcela === 'reduzida' ? 'parcela-aviso' : 'processando'); };
+A['parcela-confirma'] = () => { S.parcela = 'reduzida'; go('processando'); };
+A['parcela-volta'] = () => { S.parcela = null; go('parcela'); }; // volta para a escolha entre reduzida e integral
 
 A.intent = async (el) => {
   await busy(el, async () => {
@@ -507,7 +538,7 @@ async function processar() {
       } }),
       anima,
     ]);
-    S.resultado = r; sensivel = {}; go('resultado');
+    S.resultado = r; S.refazendo = false; go('resultado'); // os dados informados continuam em memória (não em disco) para uma nova simulação sem digitar tudo de novo
   } catch (e) {
     await anima;
     setMsg($app, e.message);
@@ -558,10 +589,10 @@ function render() {
   // Guardas de fluxo: não pular etapas após recarregar a página
   const precisaLead = !['home', 'checkout'].includes(S.tela);
   if (precisaLead && !S.lead) S.tela = 'checkout';
-  if (['credito', 'dados', 'capacidade', 'parcela', 'processando'].includes(S.tela) && !S.tipo) S.tela = 'tipo';
-  if (['dados', 'capacidade', 'parcela', 'processando'].includes(S.tela) && !S.credito) S.tela = 'credito';
-  if (['capacidade', 'parcela', 'processando'].includes(S.tela) && !sensivel.cpf) S.tela = 'dados';
-  if (['parcela', 'processando'].includes(S.tela) && !S.capacidade) S.tela = 'capacidade';
+  if (['credito', 'dados', 'capacidade', 'parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !S.tipo) S.tela = 'tipo';
+  if (['dados', 'capacidade', 'parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !S.credito) S.tela = 'credito';
+  if (['capacidade', 'parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !sensivel.cpf) S.tela = 'dados';
+  if (['parcela', 'parcela-aviso', 'processando'].includes(S.tela) && !S.capacidade) S.tela = 'capacidade';
   if (['resultado', 'sim', 'nao'].includes(S.tela) && !S.resultado) S.tela = 'tipo';
   if (S.tela === 'tipo' && S.resultado) S.resultado = null;
 

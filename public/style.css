@@ -170,3 +170,20 @@ body.is-home main{max-width:none;padding:0}
 .mini-ring{flex:none;width:22px;height:22px;margin-top:2px;border:3px solid #cddcf7;border-top-color:var(--green);border-radius:50%;animation:spin 1s linear infinite}
 .verify-ico.ok{color:#fff;background:var(--green);font-size:2rem;font-weight:800}
 @media (prefers-reduced-motion:reduce){.mini-ring{animation:none}}
+
+/* Contemplação (home) */
+.contemp{padding:18px 16px 0}
+.contemp-in{max-width:560px;margin:0 auto;background:#fff;border:1.5px solid #cfd9e8;border-radius:16px;padding:16px 14px;text-align:center;box-shadow:0 4px 14px rgba(11,36,71,.06)}
+.contemp-in h2{font-size:1.12rem;margin:0 0 6px;color:var(--navy)}
+.contemp-via{margin:0;font-size:.98rem;color:var(--ink)}
+.contemp-via span{color:var(--muted);margin:0 2px}
+.contemp-lances{list-style:none;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:0;margin:12px 0 0}
+.contemp-lances li{background:#eafaf3;color:var(--green-d);border:1.5px solid #bfeedc;border-radius:999px;padding:7px 13px;font-weight:800;font-size:.86rem}
+.contemp-lances small{font-weight:700;opacity:.85}
+.contemp-nota{margin:12px 0 0;font-size:.84rem;color:var(--muted);font-weight:600}
+/* Parcela reduzida: aviso e botão Alterar simulação */
+.aviso-reduzida{border:2px solid var(--gold);background:#fffaf0}
+.aviso-reduzida h2{margin-bottom:8px}
+.aviso-reduzida p{margin:0;color:var(--ink);font-size:1rem;line-height:1.45}
+.result .btn.alterar{margin-top:16px;background:transparent;color:#fff;border:2px solid rgba(255,255,255,.75);box-shadow:none}
+.result .btn.alterar:hover{background:rgba(255,255,255,.12)}
