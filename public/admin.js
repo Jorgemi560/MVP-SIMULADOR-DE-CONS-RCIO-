@@ -86,6 +86,8 @@ async function mostrarAlertas() {
   try {
     const st = await api('/api/admin/status'), el = document.getElementById('alertas'); if (!el) return;
     const av = [], info = [];
+    const ue = st.pagamento.ultimoErro;
+    if (ue) av.push(`<b>Último erro ao criar um Pix</b> (${esc(dt(ue.quando))}): ${esc(ue.provedor)} · HTTP ${esc(ue.http ?? '—')}${ue.codigo ? ` · ${esc(ue.codigo)}` : ''} — ${esc(ue.mensagem)}${ue.causas?.length ? ` (${esc(ue.causas.join('; '))})` : ''}<br><b>O que fazer:</b> ${esc(ue.dica)}`);
     const mp = st.pagamento.mp;
     if (mp) {
       if (mp.tokenTipo === 'teste') av.push('<b>Mercado Pago em modo de TESTE:</b> o token é de teste (<code>TEST-…</code>); pagamentos de verdade NÃO serão reconhecidos. Use o token de produção (<code>APP_USR-…</code>).');

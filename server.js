@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 try { process.loadEnvFile?.(path.join(__dirname, '.env')); } catch { /* .env é opcional */ }
 
 const { pronto: bancoPronto, todos, um, exec, tx, getConfig, setConfig, persistencia } = require('./lib/db');
-const { provider, codigoPix, contaPix, chavePixProblema, validadeMinutos, assinaturaMpValida, mpInfo } = require('./lib/payment');
+const { provider, codigoPix, contaPix, chavePixProblema, validadeMinutos, assinaturaMpValida, mpInfo, dicaParaErro, limpar } = require('./lib/payment');
 const { relatorioSimulacao } = require('./lib/pdf');
 const { calcular, escolherPlano, ARREDONDAMENTOS } = require('./lib/calc');
 const V = require('./lib/validate');
@@ -161,15 +161,21 @@ async function pagamentoAtual(leadId) {
 
 // Cria a cobrança no provedor para uma tentativa já registrada. Se falhar, a tentativa é cancelada
 // (libera nova tentativa) e o cliente recebe um erro claro.
+let ultimoErroPagamento = null; // último erro ao criar cobrança (em memória; só para o /admin)
 async function iniciarCobranca(pg, { email, nome }) {
   try {
     const r = await provider.criar({ pagamentoId: pg.id, valorCentavos: pg.valor_centavos, email, nome, expiraEm: pg.expira_em });
     await exec('UPDATE pagamentos SET provedor_id=?, pix_codigo=? WHERE id=?', [r.provedorId, r.pix?.copiaECola ?? null, pg.id]);
+    console.log(`[pagamento] cobrança criada id=${pg.id} provedor=${provider.nome} provedor_id=${r.provedorId}`);
     return r;
   } catch (e) {
-    console.error('Falha ao criar pagamento:', e.message);
+    // Diagnóstico seguro: sem token, e-mail, nome ou telefone. A mesma informação aparece no /admin (nunca para o cliente).
+    const diag = { quando: new Date().toISOString(), pagamento: pg.id, provedor: provider.nome, http: e.http ?? null, codigo: e.codigo || e.code || null,
+      mensagem: limpar(e.mensagemMp || e.message), causas: e.causas || [], requestId: e.requestId || null, dica: e.http !== undefined ? dicaParaErro(e) : 'Falha interna ao registrar a cobrança (veja o log do servidor).' };
+    ultimoErroPagamento = diag;
+    console.error(`[pagamento] FALHA ao criar cobrança id=${diag.pagamento} provedor=${diag.provedor} http=${diag.http} codigo=${diag.codigo} msg="${diag.mensagem}" causas=${JSON.stringify(diag.causas)} req=${diag.requestId} dica="${diag.dica}"`);
     await exec("UPDATE pagamentos SET status='cancelado' WHERE id=?", [pg.id]);
-    throw new HttpError(502, 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
+    throw new HttpError(502, `Não foi possível iniciar o pagamento agora. Tente novamente em instantes.${e.http !== undefined ? ` (código MP-${e.http || 'rede'})` : ''}`);
   }
 }
 
@@ -262,7 +268,8 @@ async function garantirCobranca(lead, { renovar = false } = {}) {
       if (st === 'pendente') throw new HttpError(409, 'Ainda estamos confirmando o encerramento do Pix anterior. Tente novamente em instantes.');
     }
   }
-  if ((await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ?', [lead.id])).n >= MAX_TENTATIVAS) {
+  // Só contam as cobranças que chegaram a existir no provedor: falhas ao criar (provedor_id vazio) não gastam o limite do cliente.
+  if ((await um('SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ? AND provedor_id IS NOT NULL', [lead.id])).n >= MAX_TENTATIVAS) {
     throw new HttpError(429, 'Muitas tentativas de pagamento neste cadastro. Fale com o nosso atendimento.');
   }
   let pg;
@@ -287,6 +294,7 @@ const MSG_INDISPONIVEL = 'Pagamento temporariamente indisponível. Tente novamen
 
 route('POST', '/api/checkout', async (req, { body }) => {
   limit(req, 'checkout', 10, 600000);
+  console.log(`[checkout] requisição recebida (provedor=${provider.nome}, pronto=${provider.pronto()})`); // sem dados pessoais
   if (!provider.pronto()) throw new HttpError(503, MSG_INDISPONIVEL);
   const nome = String(body.nome ?? '').trim(), email = String(body.email ?? '').trim().toLowerCase(), telefone = V.digits(body.telefone);
   if (!V.textoValido(nome, 3)) throw bad('Informe seu nome completo.');
@@ -573,7 +581,7 @@ route('GET', '/api/admin/status', async (req) => {
   return {
     banco: { tipo: PERSISTENCIA.tipo, persistente: PERSISTENCIA.persistente, motivo: PERSISTENCIA.motivo || null },
     senhaFraca: SENHA_FRACA,
-    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, chaveProblema: provider.nome === 'pix' ? chavePixProblema() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16, mp: provider.nome === 'mercadopago' ? mpInfo() : null },
+    pagamento: { provedor: provider.nome, confirmacao: provider.confirmacao, pronto: provider.pronto(), conta: provider.nome === 'pix' ? contaPix() : null, chaveProblema: provider.nome === 'pix' ? chavePixProblema() : null, webhook: provider.nome === 'pix' && (process.env.PIX_WEBHOOK_SECRET || '').length >= 16, mp: provider.nome === 'mercadopago' ? mpInfo() : null, ultimoErro: ultimoErroPagamento },
     whatsapp: { numero: fmtTel(w.numero.replace(/^55/, '')), origem: w.origem },
     aConferir: await contarAConferir(),
   };

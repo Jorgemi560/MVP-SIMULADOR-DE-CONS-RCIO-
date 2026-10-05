@@ -26,6 +26,20 @@ const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
   else ok(`Endereço do aviso automático: ${publicUrl}/api/webhooks/mercadopago`);
   if (!process.env.MP_WEBHOOK_SECRET) aviso('MP_WEBHOOK_SECRET não definido: os avisos não terão a assinatura validada (o status continua sendo conferido direto na API, então é seguro; a assinatura é uma camada extra).');
   else ok('MP_WEBHOOK_SECRET definido (assinatura dos avisos será validada).');
+  if (process.argv.includes('--testar-cobranca')) {
+    // Reproduz EXATAMENTE a criação de uma cobrança do site (POST /v1/payments, R$ 5,00, Pix) e cancela em seguida.
+    // Uma cobrança Pix pendente não cobra ninguém; é cancelada logo depois. Mostra o motivo exato se o Mercado Pago recusar.
+    const { providers, dicaParaErro, mpFetch, validadeMinutos } = require('../lib/payment');
+    try {
+      const r = await providers.mercadopago.criar({ pagamentoId: `diag${Date.now()}`, valorCentavos: 500, email: process.env.MP_TESTE_EMAIL || 'comprador.teste@exemplo.com', nome: 'Diagnostico', expiraEm: new Date(Date.now() + validadeMinutos() * 60000) });
+      ok(`O Mercado Pago ACEITOU criar a cobrança Pix (id ${r.provedorId}); código copia e cola recebido: ${r.pix?.copiaECola ? 'sim' : 'NÃO'}.`);
+      try { await mpFetch(`/v1/payments/${r.provedorId}`, { method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }); ok('Cobrança de teste cancelada (ninguém foi cobrado).'); }
+      catch (e) { aviso(`Não consegui cancelar a cobrança de teste ${r.provedorId} (ela expira sozinha): ${e.message}`); }
+    } catch (e) {
+      ruim(`O Mercado Pago RECUSOU criar a cobrança: ${e.message}`);
+      console.error(`  O que fazer: ${e.http !== undefined ? dicaParaErro(e) : 'erro inesperado'}`);
+    }
+  } else console.log('\n(Para reproduzir a criação de uma cobrança real de teste e ver o motivo exato do erro: npm run mp:verificar -- --testar-cobranca)');
   console.log(falhou ? '\nHá problemas a corrigir antes de usar.' : '\nConfiguração coerente. Próximo passo: um Pix real de R$ 5,00 pelo site.');
   process.exit(falhou ? 1 : 0);
 })();
