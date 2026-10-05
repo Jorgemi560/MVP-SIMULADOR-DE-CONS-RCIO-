@@ -188,3 +188,23 @@ Suas integrações → sua aplicação → **Webhooks** → modo **Produção** 
 1. No Shell do Render (ou local com as mesmas variáveis): `npm run mp:verificar`. Ele valida o token e o `PUBLIC_URL` **sem criar cobrança**.
 2. `/admin` mostra o aviso: "Mercado Pago: confirmação automática ativa". Se aparecer aviso vermelho (token de teste, `PUBLIC_URL` faltando), corrija.
 3. **Teste real:** faça um Pix de R$ 5,00 pelo site e **não clique em nada**: a tela deve avançar sozinha para a escolha imóvel/veículo em poucos segundos. Confira o log do Render ("Pagamento N confirmado por webhook" ou "pela varredura").
+
+## "Não foi possível iniciar o pagamento agora" (erro ao gerar o Pix)
+Essa mensagem só aparece quando o **Mercado Pago recusou** (ou não respondeu) à criação da cobrança. Agora o motivo exato fica registrado, sem dados pessoais nem token:
+1. **`/admin`**: aviso vermelho "Último erro ao criar um Pix" com HTTP, mensagem do Mercado Pago e **"O que fazer"**.
+2. **Logs do Render**: linha `[pagamento] FALHA ao criar cobrança … http=… msg="…" causas=[…] dica="…"`. Ao iniciar, uma linha mostra `Mercado Pago: token=producao PUBLIC_URL=… webhookSecret=…`.
+3. A mensagem do cliente traz um código curto, ex. `(código MP-400)`.
+4. **Reproduzir sem cliente:** no Shell do Render, `npm run mp:verificar -- --testar-cobranca`. Ele cria uma cobrança Pix de teste (R$ 5,00, não cobra ninguém), mostra o motivo exato se for recusada e a cancela. Opcional: `MP_TESTE_EMAIL` para usar outro e-mail de teste.
+
+Causas mais comuns (e o que fazer):
+| Sintoma | Causa | Solução |
+|---|---|---|
+| HTTP 400, "Collector user without key enabled for QR render" | A conta do Mercado Pago **não tem chave Pix** | Mercado Pago → Seu dinheiro → Pix → cadastre uma chave |
+| HTTP 401 ou 403 | Token errado, de teste (`TEST-…`) ou credenciais de produção não ativadas | Confira `MP_ACCESS_TOKEN` (sem espaços) e ative as credenciais de produção |
+| 400 citando `notification_url` | `PUBLIC_URL` errado | `https://ganhemaisno.online` (https, sem barra no fim) |
+| 400 citando `payer` / e-mail | E-mail inválido ou igual ao do vendedor | Teste com outro e-mail |
+| `MP-rede` | Sem comunicação com o Mercado Pago | Costuma ser passageiro |
+`PIX_CHAVE` **não é usada** com Mercado Pago (só no Pix estático): o aviso de "chave normalizada" é inofensivo nesse modo.
+
+### Erro 401 "authorization value not present"
+Significa que o Mercado Pago recebeu `Authorization: Bearer` **sem token**: a variável `MP_ACCESS_TOKEN` está em branco (só espaço ou quebra de linha) no Render. O sistema agora normaliza o valor (tira espaços, aspas e "Bearer " colado) e, se não sobrar um token utilizável, **não chama o Mercado Pago**: o checkout fica indisponível e o `/admin` mostra "Mercado Pago sem token utilizável" com o motivo. Solução: Render → Environment → `MP_ACCESS_TOKEN` → apague o valor, cole só o token `APP_USR-…` → Save Changes.

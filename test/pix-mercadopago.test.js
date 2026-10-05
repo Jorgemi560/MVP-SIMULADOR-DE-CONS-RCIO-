@@ -2,7 +2,7 @@
 // Mercado Pago (API simulada, nenhuma chamada real): validade enviada ao provedor, expiração detectada e pagamento de última hora não perdido.
 process.env.ADMIN_PASSWORD = 'segredo-teste';
 process.env.PAYMENT_PROVIDER = 'mercadopago';
-process.env.MP_ACCESS_TOKEN = 'TEST-token-falso';
+process.env.MP_ACCESS_TOKEN = 'TEST-token-falso-de-teste-1234567890';
 process.env.TRUST_PROXY_HOPS = '1';
 process.env.MP_WEBHOOK_SECRET = 'segredo-webhook-mp-teste';
 process.env.PUBLIC_URL = 'https://exemplo.test';
@@ -199,4 +199,75 @@ test('o botão "já fiz o pagamento" não existe com Mercado Pago (endpoint recu
   assert.equal((await call(`/api/lead/${c.id}/informar-pagamento`, { method: 'POST', headers: c.h })).status, 404);
   const p = await ids(c.id);
   assert.equal((await aviso(p.provedor_id, assinar(p.provedor_id), { type: 'merchant_order', data: { id: p.provedor_id } })).status, 200);
+});
+
+// ---------- diagnóstico de falhas na criação da cobrança ----------
+async function checkoutComFalha(respostaMp, contato) {
+  const f = global.fetch, linhas = [], origErr = console.error;
+  global.fetch = async (url, opts = {}) => (opts.method === 'POST' && String(url).includes('mercadopago')
+    ? (typeof respostaMp === 'function' ? respostaMp() : { ok: false, status: respostaMp.status, headers: { get: (h) => (h === 'x-request-id' ? 'req-abc-123' : null) }, json: async () => respostaMp.body })
+    : f(url, opts));
+  console.error = (...a) => { linhas.push(a.join(' ')); };
+  let r;
+  try { r = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.8.8.${++ip}` }, body: contato }); }
+  finally { global.fetch = f; console.error = origErr; }
+  const A = { Authorization: `Bearer ${(await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } })).data.token}` };
+  const st = (await call('/api/admin/status', { headers: A })).data;
+  return { r, log: linhas.join('\n'), ultimo: st.pagamento.ultimoErro };
+}
+const contatoDiag = { nome: 'Maria Segredo Silva', telefone: '11955554444', email: 'maria.segredo@exemplo.com' };
+
+test('diagnóstico: conta sem chave Pix no MP → erro claro no /admin e no log, sem dados pessoais', async () => {
+  const { r, log, ultimo } = await checkoutComFalha({ status: 400, body: { error: 'bad_request', message: 'Collector user without key enabled for QR render', cause: [{ code: 13253, description: 'Collector user without key enabled for QR render' }] } }, contatoDiag);
+  assert.equal(r.status, 502); assert.match(r.data.erro, /Não foi possível iniciar o pagamento agora/); assert.match(r.data.erro, /MP-400/);
+  assert.equal(ultimo.http, 400); assert.match(ultimo.dica, /CHAVE PIX/i); assert.equal(ultimo.requestId, 'req-abc-123');
+  assert.match(log, /\[pagamento\] FALHA ao criar cobrança/); assert.match(log, /http=400/);
+  for (const segredo of ['maria.segredo', 'Maria', 'Segredo', '11955554444', 'APP_USR-token-falso']) {
+    assert.ok(!log.includes(segredo) && !JSON.stringify(ultimo).includes(segredo), `vazou: ${segredo}`);
+  }
+});
+
+test('diagnóstico: token recusado (401) e e-mail do pagador no texto do MP é mascarado', async () => {
+  const { r, ultimo } = await checkoutComFalha({ status: 401, body: { message: 'invalid access token APP_USR-1234567890-abc for maria.segredo@exemplo.com' } }, { ...contatoDiag, email: 'outra@exemplo.com' });
+  assert.equal(r.status, 502); assert.match(ultimo.dica, /MP_ACCESS_TOKEN/);
+  assert.ok(!JSON.stringify(ultimo).includes('maria.segredo@exemplo.com') && !JSON.stringify(ultimo).includes('APP_USR-1234567890'));
+});
+
+test('diagnóstico: sem rede/DNS com o MP → código MP-rede e orientação', async () => {
+  const f = global.fetch;
+  global.fetch = async (url, opts = {}) => { if (opts.method === 'POST' && String(url).includes('mercadopago')) { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; } return f(url, opts); };
+  const A = { Authorization: `Bearer ${(await call('/api/admin/login', { method: 'POST', body: { senha: 'segredo-teste' } })).data.token}` };
+  let r; const origErr = console.error; console.error = () => {};
+  try { r = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.8.8.${++ip}` }, body: { ...contatoDiag, email: 'rede@exemplo.com', telefone: '11955550001' } }); }
+  finally { global.fetch = f; console.error = origErr; }
+  assert.equal(r.status, 502); assert.match(r.data.erro, /MP-rede/);
+  const st = (await call('/api/admin/status', { headers: A })).data;
+  assert.equal(st.pagamento.ultimoErro.http, 0); assert.match(st.pagamento.ultimoErro.dica, /rede|comunicação/i);
+});
+
+test('falha não deixa lixo: a tentativa fica "cancelada" e, corrigido o problema, o mesmo cliente consegue pagar', async () => {
+  const contato = { nome: 'Cliente Retry', telefone: '11955550002', email: 'retry@exemplo.com' };
+  const { r } = await checkoutComFalha({ status: 500, body: { message: 'internal' } }, contato);
+  assert.equal(r.status, 502);
+  const lead = await db.um('SELECT id FROM leads WHERE email = ?', [contato.email]);
+  assert.equal((await db.um("SELECT COUNT(*)::int AS n FROM pagamentos WHERE lead_id = ? AND status = 'cancelado'", [lead.id])).n, 1);
+  const ok = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.8.8.${++ip}` }, body: contato });
+  assert.equal(ok.status, 200); assert.equal(ok.data.leadId, lead.id); assert.equal(ok.data.novo, true); assert.ok(ok.data.pix.copiaECola);
+});
+
+test('tentativas que falharam ao criar no provedor não consomem o limite de cobranças do cliente', async () => {
+  const contato = { nome: 'Cliente Falhas', telefone: '11955550003', email: 'falhas@exemplo.com' };
+  const { r } = await checkoutComFalha({ status: 500, body: { message: 'internal' } }, contato);
+  assert.equal(r.status, 502);
+  const lead = await db.um('SELECT id FROM leads WHERE email = ?', [contato.email]);
+  for (let i = 0; i < 12; i++) await db.exec("INSERT INTO pagamentos (lead_id, provedor, valor_centavos, status) VALUES (?, 'mercadopago', 500, 'cancelado')", [lead.id]); // 12 falhas sem provedor_id
+  const ok = await call('/api/checkout', { method: 'POST', headers: { 'X-Forwarded-For': `10.8.8.${++ip}` }, body: contato });
+  assert.equal(ok.status, 200); assert.ok(ok.data.pix.copiaECola);
+});
+
+test('o cabeçalho Authorization enviado ao Mercado Pago é "Bearer <token>" com o valor da variável (nunca em branco)', async () => {
+  const f = global.fetch; let auth = null;
+  global.fetch = async (url, opts = {}) => { if (opts.method === 'POST' && String(url).includes('mercadopago')) auth = opts.headers.Authorization; return f(url, opts); };
+  try { await cliente(); } finally { global.fetch = f; }
+  assert.equal(auth, 'Bearer TEST-token-falso-de-teste-1234567890');
 });

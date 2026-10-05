@@ -86,8 +86,11 @@ async function mostrarAlertas() {
   try {
     const st = await api('/api/admin/status'), el = document.getElementById('alertas'); if (!el) return;
     const av = [], info = [];
+    const ue = st.pagamento.ultimoErro;
+    if (ue) av.push(`<b>Último erro ao criar um Pix</b> (${esc(dt(ue.quando))}): ${esc(ue.provedor)} · HTTP ${esc(ue.http ?? '—')}${ue.codigo ? ` · ${esc(ue.codigo)}` : ''} — ${esc(ue.mensagem)}${ue.causas?.length ? ` (${esc(ue.causas.join('; '))})` : ''}<br><b>O que fazer:</b> ${esc(ue.dica)}`);
     const mp = st.pagamento.mp;
-    if (mp) {
+    if (mp?.tokenProblema) av.push(`<b>Mercado Pago sem token utilizável:</b> ${esc(mp.tokenProblema)} Enquanto isso, ninguém consegue pagar.`);
+    if (mp && !mp.tokenProblema) {
       if (mp.tokenTipo === 'teste') av.push('<b>Mercado Pago em modo de TESTE:</b> o token é de teste (<code>TEST-…</code>); pagamentos de verdade NÃO serão reconhecidos. Use o token de produção (<code>APP_USR-…</code>).');
       if (!mp.publicUrl) av.push('<b>Aviso automático (webhook) desligado:</b> defina <code>PUBLIC_URL</code> (ex.: https://ganhemaisno.online). Sem isso o sistema ainda reconhece os pagamentos consultando o Mercado Pago, só que um pouco mais devagar.');
       else info.push('Mercado Pago: confirmação automática ativa (webhook + consulta direta' + (mp.webhookSecret ? ' + assinatura validada' : '') + ').');
