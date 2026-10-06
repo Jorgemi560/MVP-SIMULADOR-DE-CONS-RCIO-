@@ -367,3 +367,29 @@ test('tela "Ainda não": "QUERO ENTENDER MELHOR" abre o guia oficial (e o admin 
   } finally { await db.exec("DELETE FROM config WHERE chave = 'learn_url'"); }
   await ctx.close();
 });
+
+// ---------- Resultado: a parcela reduzida só aparece quando foi a escolhida ----------
+test('resultado: com PARCELA INTEGRAL não mostra a reduzida; com PARCELA REDUZIDA continua mostrando', opt, async () => {
+  const email = `escolha${Date.now()}@teste.com`;
+  const { ctx, p } = await novaPagina(email);
+  await ateOCredito(p, email, 'imovel');
+  await p.click('[data-act=credito][data-v="100000"]');
+  await preencherDados(p);
+  await p.click('[data-act=cap]:first-of-type');
+  // 1) integral: só a parcela integral
+  await p.click('[data-act=parcela][data-v=integral]');
+  await p.waitForSelector('#btn-alterar', { timeout: 20000 });
+  const integral = await texto(p);
+  assert.match(integral, /PARCELA ESTIMADA R\$\s?564,50/i);
+  assert.ok(!/parcela reduzida/i.test(integral)); assert.ok(!/337,30/.test(integral)); assert.ok(!/Redução de 50%/.test(integral));
+  assert.equal(await p.locator('.big.red').count(), 0);
+  // 2) reduzida (pelo "Alterar simulação"): continua aparecendo como sempre
+  await p.click('#btn-alterar'); await p.click('[data-act=credito][data-v="100000"]'); await p.click('[data-act=cap]:first-of-type');
+  await p.click('[data-act=parcela][data-v=reduzida]'); await p.click('[data-act=parcela-confirma]');
+  await p.waitForSelector('#btn-alterar', { timeout: 20000 });
+  const reduzida = await texto(p);
+  assert.match(reduzida, /PARCELA ESTIMADA R\$\s?564,50/i); assert.match(reduzida, /PARCELA REDUZIDA R\$\s?337,30/i);
+  assert.match(reduzida, /Redução de 50% somente sobre o fundo comum/);
+  assert.equal(await p.locator('.big.red').count(), 1);
+  await ctx.close();
+});

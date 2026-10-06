@@ -285,7 +285,7 @@ T.resultado = () => {
       <div class="kv"><span>Modalidade</span><b>${rotulo}</b></div>
       ${r.disponivel ? `
         <div class="big"><small>Parcela estimada</small><strong>${brl(r.parcelaIntegral)}</strong></div>
-        ${r.parcelaReduzida ? `<div class="big red"><small>Parcela reduzida</small><strong>${brl(r.parcelaReduzida)}</strong></div>${r.regraReducao ? `<p class="fine">${esc(r.regraReducao)}</p>` : ''}${r.reducaoMeses ? `<p class="fine">Redução válida por ${r.reducaoMeses} meses.</p>` : ''}` : ''}
+        ${r.parcelaReduzida && r.escolha !== 'integral' ? `<div class="big red"><small>Parcela reduzida</small><strong>${brl(r.parcelaReduzida)}</strong></div>${r.regraReducao ? `<p class="fine">${esc(r.regraReducao)}</p>` : ''}${r.reducaoMeses ? `<p class="fine">Redução válida por ${r.reducaoMeses} meses.</p>` : ''}` : ''}
         <div class="kv"><span>Prazo</span><b>${r.prazo} meses</b></div>
       ` : `<div class="big"><strong style="font-size:1.2rem">Para este valor, um especialista vai preparar a simulação sob medida.</strong></div>`}
       <p class="fine">Os valores apresentados são estimativos e podem variar conforme o plano, grupo e condições vigentes${r.indice ? `, além do reajuste pelo ${esc(r.indice)}` : ''}. A proposta definitiva será apresentada por um especialista. Esta simulação não representa aprovação de crédito nem garantia de contemplação.</p>
